@@ -1,6 +1,7 @@
 import os
 import platform
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +25,24 @@ def find_emulator_binary(emulator_dir: Path, binary_name: str) -> Optional[Path]
     return emulator_binary if emulator_binary.exists() else None
 
 
+def setup_library_path(emulator_dir: Path, binary_name: str):
+    lib_dirs = []
+
+    emulator_lib = emulator_dir / "lib"
+    if emulator_lib.exists():
+        lib_dirs.append(str(emulator_lib))
+
+    parent_lib = emulator_dir.parent / "lib"
+    if parent_lib.exists():
+        lib_dirs.append(str(parent_lib))
+
+    if lib_dirs:
+        current_ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+        if current_ld_path:
+            lib_dirs.append(current_ld_path)
+        os.environ["LD_LIBRARY_PATH"] = ":".join(lib_dirs)
+
+
 def build_launch_command(
     game: GameEntry,
     library: GameLibrary,
@@ -43,8 +62,8 @@ def build_launch_command(
             emulator_binary, emulator_dir, game, use_fullscreen, debug
         )
 
-    elif "ryujinx" in binary_name.lower():
-        return _build_ryujinx_command(emulator_binary, emulator_dir, game)
+    elif "yuzu" in binary_name.lower() or "eden" in binary_name.lower():
+        return _build_yuzu_command(emulator_binary, emulator_dir, game, use_fullscreen)
 
     else:
         return _build_generic_command(
@@ -84,32 +103,52 @@ def _build_mupen64plus_command(
     return cmd
 
 
-def _build_ryujinx_command(
-    binary: Path, emulator_dir: Path, game: GameEntry
+def _build_yuzu_command(
+    binary: Path, emulator_dir: Path, game: GameEntry, fullscreen: bool = True
 ) -> list[str]:
-    import shutil
-
     portable_dir = emulator_dir.parent / "portable"
     portable_dir.mkdir(exist_ok=True)
 
-    cmd = [str(binary), "-r", str(portable_dir)]
+    keys_dir = portable_dir / "keys"
+    keys_dir.mkdir(exist_ok=True)
+
+    resources_dir = emulator_dir.parent / "resources"
+
+    if resources_dir.exists():
+        prod_keys = resources_dir / "prod.keys"
+        if prod_keys.exists():
+            import shutil
+
+            shutil.copy2(prod_keys, keys_dir / "prod.keys")
+
+        firmware_zip = resources_dir / "firmware.zip"
+        if firmware_zip.exists():
+            firmware_dir = portable_dir / "nand" / "system" / "Contents" / "registered"
+            firmware_dir.mkdir(parents=True, exist_ok=True)
+
+            import zipfile
+
+            with zipfile.ZipFile(firmware_zip, "r") as zip_ref:
+                zip_ref.extractall(firmware_dir)
+
+    cmd = [str(binary), "-u", str(portable_dir)]
+
+    if fullscreen:
+        cmd.append("-f")
+
+    cmd.extend(["-g", str(game.rom_path)])
 
     dlc_dir = game.resources_path / "dlc"
     updates_dir = game.resources_path / "updates"
 
-    if dlc_dir.exists() or updates_dir.exists():
-        patches_dir = portable_dir / "patchesAndDlc"
-        patches_dir.mkdir(parents=True, exist_ok=True)
+    if dlc_dir.exists():
+        for dlc_file in dlc_dir.glob("*.nsp"):
+            cmd.extend(["--installnsp", str(dlc_file)])
 
-        if dlc_dir.exists():
-            for dlc_file in dlc_dir.glob("*.nsp"):
-                shutil.copy2(dlc_file, patches_dir / dlc_file.name)
+    if updates_dir.exists():
+        for update_file in updates_dir.glob("*.nsp"):
+            cmd.extend(["--installnsp", str(update_file)])
 
-        if updates_dir.exists():
-            for update_file in updates_dir.glob("*.nsp"):
-                shutil.copy2(update_file, patches_dir / update_file.name)
-
-    cmd.append(str(game.rom_path))
     return cmd
 
 
@@ -157,6 +196,8 @@ def launch_game(
         term.print(f"[yellow]install emulator to: {emulator_dir}[/yellow]")
         return False
 
+    setup_library_path(emulator_dir, binary_name)
+
     use_fullscreen = fullscreen if fullscreen is not None else config.fullscreen
 
     cmd = build_launch_command(
@@ -183,14 +224,29 @@ def launch_game(
             "--",
         ] + cmd
 
+    if game.metadata.custom_args:
+        cmd.extend(game.metadata.custom_args)
+
     if extra_args:
         cmd.extend(extra_args)
 
     if verbose:
         term.print(f"[dim]command: {' '.join(cmd)}[/dim]")
 
+    start_time = time.time()
+
     try:
         subprocess.run(cmd, check=True)
+
+        elapsed = int(time.time() - start_time)
+        game.metadata.update_playtime(elapsed)
+
+        metadata_file = game.path / "metadata.json"
+        game.metadata.save(metadata_file)
+
+        if verbose:
+            term.print(f"[dim]played for {elapsed // 60}m {elapsed % 60}s[/dim]")
+
         return True
     except subprocess.CalledProcessError as e:
         term.print(f"[red]launch failed: {e}[/red]")

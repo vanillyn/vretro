@@ -1,4 +1,5 @@
 import json
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -19,6 +20,15 @@ class GameMetadata:
     has_updates: bool = False
     emulator: Optional[str] = None
     thumbnail: Optional[str] = None
+    playtime: int = 0
+    last_played: Optional[float] = None
+    is_favorite: bool = False
+    version: str = "1.0"
+    custom_args: List[str] = None
+
+    def __post_init__(self):
+        if self.custom_args is None:
+            self.custom_args = []
 
     @classmethod
     def from_json(cls, data: dict):
@@ -34,6 +44,10 @@ class GameMetadata:
     def save(self, path: Path):
         with open(path, "w") as f:
             json.dump(self.to_json(), f, indent=2)
+
+    def update_playtime(self, seconds: int):
+        self.playtime += seconds
+        self.last_played = time.time()
 
 
 @dataclass
@@ -62,6 +76,24 @@ class GameEntry:
 
         return None
 
+    def get_saves(self) -> List[Path]:
+        if not self.saves_path.exists():
+            return []
+        return list(self.saves_path.glob("*"))
+
+    def backup_save(self, backup_dir: Path) -> bool:
+        if not self.saves_path.exists():
+            return False
+
+        backup_name = f"{self.metadata.code}_{int(time.time())}"
+        backup_path = backup_dir / backup_name
+        backup_path.mkdir(parents=True, exist_ok=True)
+
+        import shutil
+
+        shutil.copytree(self.saves_path, backup_path, dirs_exist_ok=True)
+        return True
+
 
 CONSOLE_EXTENSIONS = {
     "SFC": "sfc",
@@ -83,6 +115,10 @@ CONSOLE_EXTENSIONS = {
     "SMS": "sms",
     "GG": "gg",
     "ARCADE": "zip",
+    "DOS": "zip",
+    "WIIU": "wux",
+    "NATIVE": "sh",
+    "WINE": "exe",
 }
 
 
@@ -107,7 +143,7 @@ class GameLibrary:
         self.consoles = {}
 
         if self.debug:
-            print(f"[library.scan_consoles] starting scan")
+            print("[library.scan_consoles] starting scan")
 
         if not self.console_root.exists():
             if verbose or self.debug:
@@ -179,7 +215,7 @@ class GameLibrary:
         self.games = []
 
         if self.debug:
-            print(f"[library.scan] starting game scan")
+            print("[library.scan] starting game scan")
 
         if scan_consoles:
             self.scan_consoles(verbose=verbose)
@@ -231,8 +267,8 @@ class GameLibrary:
                         )
 
                     try:
-                        from config import VRetroConfig
-                        from database import OnlineDatabase
+                        from .config import VRetroConfig
+                        from .database import OnlineDatabase
 
                         db = OnlineDatabase(VRetroConfig.load())
                         game_name = game_dir.name.replace("-", " ").title()
@@ -348,13 +384,28 @@ class GameLibrary:
 
     def search(self, query: str) -> List[GameEntry]:
         query = query.lower()
-        return [
-            game
-            for game in self.games
-            if query in game.metadata.get_title().lower()
-            or query in game.metadata.console.lower()
-            or query in game.metadata.code.lower()
-        ]
+        results = []
+
+        for game in self.games:
+            title_match = query in game.metadata.get_title().lower()
+            console_match = query in game.metadata.console.lower()
+            code_match = query in game.metadata.code.lower()
+
+            if title_match or console_match or code_match:
+                score = 0
+                if title_match:
+                    score += 10
+                if game.metadata.get_title().lower().startswith(query):
+                    score += 5
+                if console_match:
+                    score += 2
+                if code_match:
+                    score += 1
+
+                results.append((score, game))
+
+        results.sort(key=lambda x: x[0], reverse=True)
+        return [game for score, game in results]
 
     def filter_by_console(self, console: str) -> List[GameEntry]:
         console = console.upper()
@@ -365,6 +416,14 @@ class GameLibrary:
             if game.metadata.code == code:
                 return game
         return None
+
+    def get_favorites(self) -> List[GameEntry]:
+        return [game for game in self.games if game.metadata.is_favorite]
+
+    def get_recently_played(self, limit: int = 10) -> List[GameEntry]:
+        played = [g for g in self.games if g.metadata.last_played]
+        played.sort(key=lambda g: g.metadata.last_played, reverse=True)
+        return played[:limit]
 
     def get_consoles(self) -> List[str]:
         return sorted(set(game.metadata.console for game in self.games))

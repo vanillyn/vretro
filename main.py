@@ -107,8 +107,11 @@ def fuzzy_search_all(
 @click.option("-r", "--remove", help="remove database/source")
 @click.option("-C", "--config", "config_flag", is_flag=True, help="config mode")
 @click.option("-e", "--edit", is_flag=True, help="edit config")
+@click.option("-M", "--manage", help="manage saves/metadata")
 @click.option("-V", "--verbose", is_flag=True, help="verbose output")
 @click.option("--debug", is_flag=True, help="debug mode with detailed logging")
+@click.option("--favorite", is_flag=True, help="toggle favorite status")
+@click.option("--args", "custom_args", help="custom launch arguments")
 @click.argument("args", nargs=-1)
 @click.version_option(version="0.1.0", prog_name="vretro")
 def cli(
@@ -130,8 +133,11 @@ def cli(
     remove,
     config_flag,
     edit,
+    manage,
     verbose,
     debug,
+    favorite,
+    custom_args,
     args,
 ):
     """vretro - downloader and library management for abandonware"""
@@ -153,6 +159,104 @@ def cli(
     )
     db = OnlineDatabase(config)
     sources = SourceManager(debug=debug)
+
+    if manage:
+        library.scan(verbose=verbose)
+        game = library.get_by_code(manage)
+
+        if not game:
+            matches = library.search(manage)
+            if matches:
+                if len(matches) == 1:
+                    game = matches[0]
+                else:
+                    term.print(f"[yellow]multiple matches for '{manage}':[/yellow]\n")
+                    for match in matches[:10]:
+                        term.print(
+                            f"  {match.metadata.code}: {match.metadata.get_title()}"
+                        )
+                    return
+
+        if not game:
+            term.print(f"[red]game not found: {manage}[/red]")
+            return
+
+        term.print(f"[bold cyan]managing {game.metadata.get_title()}[/bold cyan]\n")
+
+        saves = game.get_saves()
+        if saves:
+            term.print("[bold]saves:[/bold]")
+            for save in saves:
+                size = save.stat().st_size / 1024
+                term.print(f"  {save.name} ({size:.1f} kb)")
+        else:
+            term.print("[dim]no saves found[/dim]")
+
+        term.print(f"\n[bold]playtime:[/bold] {game.metadata.playtime // 60}m")
+
+        if game.metadata.last_played:
+            import time
+
+            played = time.strftime(
+                "%Y-%m-%d %H:%M", time.localtime(game.metadata.last_played)
+            )
+            term.print(f"[bold]last played:[/bold] {played}")
+
+        term.print(
+            f"[bold]favorite:[/bold] {'yes' if game.metadata.is_favorite else 'no'}"
+        )
+
+        if game.metadata.custom_args:
+            term.print(
+                f"[bold]custom args:[/bold] {' '.join(game.metadata.custom_args)}"
+            )
+
+        term.print("\n[dim]actions: backup-save, set-args, toggle-favorite[/dim]")
+        try:
+            action = input("action: ").lower()
+
+            if action == "backup-save":
+                backup_dir = config.get_games_root() / "backups"
+                if game.backup_save(backup_dir):
+                    term.print("[green]save backed up[/green]")
+                else:
+                    term.print("[red]backup failed[/red]")
+
+            elif action == "set-args":
+                args_input = input("arguments: ")
+                game.metadata.custom_args = args_input.split() if args_input else []
+                game.metadata.save(game.path / "metadata.json")
+                term.print("[green]arguments saved[/green]")
+
+            elif action == "toggle-favorite":
+                game.metadata.is_favorite = not game.metadata.is_favorite
+                game.metadata.save(game.path / "metadata.json")
+                status = "added to" if game.metadata.is_favorite else "removed from"
+                term.print(f"[green]{status} favorites[/green]")
+
+        except KeyboardInterrupt:
+            term.print("\n[yellow]cancelled[/yellow]")
+
+        return
+
+    if favorite and args:
+        library.scan(verbose=verbose)
+        game = library.get_by_code(args[0])
+
+        if not game:
+            matches = library.search(args[0])
+            if matches:
+                game = matches[0]
+
+        if game:
+            game.metadata.is_favorite = not game.metadata.is_favorite
+            game.metadata.save(game.path / "metadata.json")
+            status = "favorited" if game.metadata.is_favorite else "unfavorited"
+            term.print(f"[green]{status} {game.metadata.get_title()}[/green]")
+        else:
+            term.print(f"[red]game not found: {args[0]}[/red]")
+
+        return
 
     if scan_flag:
         scan_dir = None
@@ -211,15 +315,18 @@ def cli(
             table.add_column("title")
             table.add_column("console")
             table.add_column("year")
+            table.add_column("favorite", style="yellow")
 
             for game in sorted(
                 games, key=lambda g: (g.metadata.console, g.metadata.get_title())
             ):
+                fav = "★" if game.metadata.is_favorite else ""
                 table.add_row(
                     game.metadata.code,
                     game.metadata.get_title(),
                     game.metadata.console,
                     str(game.metadata.year),
+                    fav,
                 )
 
             term.print(table)
@@ -470,6 +577,13 @@ def cli(
                         for bios in meta.emulator.bios_files:
                             term.print(f"  {bios}")
 
+                        resources_dir = console_dir / "resources"
+                        term.print(f"\n[dim]place bios files in: {resources_dir}[/dim]")
+                        if code.upper() == "SWITCH":
+                            term.print(
+                                "[dim]for switch: prod.keys and firmware.zip from your console[/dim]"
+                            )
+
                     if meta.emulator.download_url:
                         term.print("\n[yellow]download emulator?[/yellow]")
                         try:
@@ -516,12 +630,19 @@ def cli(
             table.add_column("code", style="dim")
             table.add_column("title")
             table.add_column("year")
+            table.add_column("playtime", style="dim")
 
             for game in sorted(games, key=lambda g: g.metadata.get_title()):
+                playtime = (
+                    f"{game.metadata.playtime // 60}m"
+                    if game.metadata.playtime
+                    else "-"
+                )
                 table.add_row(
                     game.metadata.code,
                     game.metadata.get_title(),
                     str(game.metadata.year),
+                    playtime,
                 )
 
             term.print(table)
@@ -567,6 +688,17 @@ def cli(
                 term.print(f"[bold]year:[/bold] {m.year}")
                 term.print(f"[bold]region:[/bold] {m.region}")
 
+                if m.playtime:
+                    hours = m.playtime // 3600
+                    minutes = (m.playtime % 3600) // 60
+                    if hours:
+                        term.print(f"[bold]playtime:[/bold] {hours}h {minutes}m")
+                    else:
+                        term.print(f"[bold]playtime:[/bold] {minutes}m")
+
+                if m.is_favorite:
+                    term.print("[bold]favorite:[/bold] ★")
+
                 term.print("\n[bold]publishers:[/bold]")
                 for region, pub in m.publisher.items():
                     term.print(f"  {region}: {pub}")
@@ -606,6 +738,68 @@ def cli(
                 return
 
             term.print(f"[red]not found: {query}[/red]")
+            return
+
+        if args and args[0] == "favorites":
+            favorites = library.get_favorites()
+
+            if not favorites:
+                term.print("[yellow]no favorites[/yellow]")
+                return
+
+            term.print(f"[green]found {len(favorites)} favorites[/green]\n")
+
+            table = Table(show_header=True, header_style="bold cyan")
+            table.add_column("code", style="dim")
+            table.add_column("title")
+            table.add_column("console")
+            table.add_column("playtime", style="dim")
+
+            for game in sorted(favorites, key=lambda g: g.metadata.get_title()):
+                playtime = (
+                    f"{game.metadata.playtime // 60}m"
+                    if game.metadata.playtime
+                    else "-"
+                )
+                table.add_row(
+                    game.metadata.code,
+                    game.metadata.get_title(),
+                    game.metadata.console,
+                    playtime,
+                )
+
+            term.print(table)
+            return
+
+        if args and args[0] == "recent":
+            recent = library.get_recently_played()
+
+            if not recent:
+                term.print("[yellow]no recently played games[/yellow]")
+                return
+
+            term.print("[cyan]recently played:[/cyan]\n")
+
+            table = Table(show_header=True, header_style="bold cyan")
+            table.add_column("code", style="dim")
+            table.add_column("title")
+            table.add_column("console")
+            table.add_column("playtime", style="dim")
+
+            for game in recent:
+                playtime = (
+                    f"{game.metadata.playtime // 60}m"
+                    if game.metadata.playtime
+                    else "-"
+                )
+                table.add_row(
+                    game.metadata.code,
+                    game.metadata.get_title(),
+                    game.metadata.console,
+                    playtime,
+                )
+
+            term.print(table)
             return
 
         games = library.games
@@ -653,6 +847,7 @@ def cli(
 
             if not consoles:
                 term.print("[yellow]no console databases found[/yellow]")
+                term.print(f"[dim]looking in: {sources.vrdb.db_dir}[/dim]")
                 return
 
             term.print("[cyan]vrdb consoles:[/cyan]\n")
@@ -741,19 +936,38 @@ def cli(
                     term.print(
                         f"[yellow]multiple matches for '{game_query}':[/yellow]\n"
                     )
-                    for match in matches[:10]:
+                    for i, match in enumerate(matches[:10], 1):
+                        fav = "★" if match.metadata.is_favorite else " "
                         term.print(
-                            f"  {match.metadata.code}: {match.metadata.get_title()}"
+                            f"  {i}. {fav} {match.metadata.code}: {match.metadata.get_title()}"
                         )
-                    return
+
+                    try:
+                        choice = input("\nselect number: ")
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(matches):
+                            game = matches[idx]
+                    except (ValueError, KeyboardInterrupt):
+                        term.print("\n[yellow]cancelled[/yellow]")
+                        return
 
         if not game:
             term.print(f"[red]game not found: {game_query}[/red]")
             return
 
+        extra_args = None
+        if custom_args:
+            extra_args = custom_args.split()
+
         term.print(f"[cyan]launching {game.metadata.get_title()}...[/cyan]")
         launch_game(
-            game, config, library, fullscreen=fullscreen, verbose=verbose, debug=debug
+            game,
+            config,
+            library,
+            fullscreen=fullscreen,
+            extra_args=extra_args,
+            verbose=verbose,
+            debug=debug,
         )
         return
 

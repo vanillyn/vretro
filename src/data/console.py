@@ -110,7 +110,7 @@ class ConsoleMetadata:
 
 
 def get_console_metadata(code: str) -> Optional[ConsoleMetadata]:
-    from vrdb import get_vrdb
+    from ..util.vrdb import get_vrdb
 
     vrdb = get_vrdb()
     vrdb_console = vrdb.get_console(code)
