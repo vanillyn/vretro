@@ -12,6 +12,17 @@ term = Console()
 IS_WINDOWS = platform.system() == "Windows"
 
 
+def _get_linux_distro() -> str:
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if line.startswith("ID="):
+                    return line.split("=")[1].strip().strip('"')
+    except Exception:
+        pass
+    return "unknown"
+
+
 def download_emulator(
     console_code: str,
     emulator_name: str,
@@ -26,6 +37,18 @@ def download_emulator(
         if not download_url:
             term.print("[red]failed to resolve download url[/red]")
             return False
+
+        if filename and filename.endswith(".appimage"):
+            existing_appimage = _find_appimage(install_dir)
+            if existing_appimage:
+                zsync_url = download_url.replace(
+                    ".AppImage", ".AppImage.zsync"
+                ).replace(".appimage", ".appimage.zsync")
+                if _try_zsync_update(existing_appimage, zsync_url):
+                    term.print(f"[green]updated via zsync: {install_dir}[/green]")
+                    return True
+                else:
+                    term.print("[dim]zsync failed, downloading full appimage...[/dim]")
 
         term.print(f"[dim]downloading {filename}...[/dim]")
 
@@ -90,13 +113,37 @@ def _resolve_github_release(url: str) -> tuple[Optional[str], Optional[str]]:
 def _select_platform_asset(assets: list[dict]) -> Optional[dict]:
     if IS_WINDOWS:
         keywords = ["win", "windows", "win64", "x64"]
+        exclude = ["linux", "macos", "osx", "darwin"]
     else:
-        keywords = ["linux", "tar", "ubuntu"]
+        distro = _get_linux_distro()
+
+        if distro in ["arch", "manjaro", "endeavouros"]:
+            for asset in assets:
+                name = asset["name"].lower()
+                if name.endswith(".appimage"):
+                    return asset
+
+        keywords = ["linux", "x86_64", "amd64"]
+        exclude = ["win", "windows", "macos", "osx", "darwin", "bsd", "openbsd"]
 
     for asset in assets:
         name = asset["name"].lower()
-        if any(kw in name for kw in keywords):
+
+        has_exclude = any(ex in name for ex in exclude)
+        if has_exclude:
+            continue
+
+        has_keyword = any(kw in name for kw in keywords)
+        if has_keyword:
             return asset
+
+    if not IS_WINDOWS:
+        for asset in assets:
+            name = asset["name"].lower()
+            if name.endswith((".tar.gz", ".tgz", ".tar.xz")) and not any(
+                ex in name for ex in exclude
+            ):
+                return asset
 
     return None
 
@@ -111,12 +158,32 @@ def _save_temp_file(response: requests.Response) -> Path:
 
 def _extract_archive(archive_path: Path, filename: str, dest_dir: Path) -> bool:
     try:
-        if filename.endswith((".tar.gz", ".tgz")):
+        if filename.endswith(".appimage"):
+            filename_lower = filename.lower()
+            binary_name = filename_lower.replace(".appimage", "")
+
+            binary_name = binary_name.split("-")[0]
+            binary_name = binary_name.split("_")[0]
+
+            for char in "0123456789.v":
+                binary_name = binary_name.rstrip(char)
+
+            dest_file = dest_dir / binary_name
+            dest_file.write_bytes(archive_path.read_bytes())
+            dest_file.chmod(0o755)
+        elif filename.endswith((".tar.gz", ".tgz")):
             with tarfile.open(archive_path, "r:gz") as tar:
                 tar.extractall(dest_dir)
+                _flatten_if_single_dir(dest_dir)
+        elif filename.endswith((".tar.xz", ".tar.bz2")):
+            mode = "r:xz" if filename.endswith(".xz") else "r:bz2"
+            with tarfile.open(archive_path, mode) as tar:
+                tar.extractall(dest_dir)
+                _flatten_if_single_dir(dest_dir)
         elif filename.endswith(".zip"):
             with zipfile.ZipFile(archive_path, "r") as zip_ref:
                 zip_ref.extractall(dest_dir)
+                _flatten_if_single_dir(dest_dir)
         else:
             dest_file = dest_dir / filename
             dest_file.write_bytes(archive_path.read_bytes())
@@ -125,6 +192,61 @@ def _extract_archive(archive_path: Path, filename: str, dest_dir: Path) -> bool:
         return True
     except Exception:
         return False
+
+
+def _flatten_if_single_dir(dest_dir: Path):
+    contents = list(dest_dir.iterdir())
+
+    if len(contents) == 1 and contents[0].is_dir():
+        nested_dir = contents[0]
+
+        temp_dir = dest_dir.parent / f"{dest_dir.name}_temp"
+        nested_dir.rename(temp_dir)
+
+        for item in temp_dir.iterdir():
+            item.rename(dest_dir / item.name)
+
+        temp_dir.rmdir()
+
+
+def _find_appimage(install_dir: Path) -> Optional[Path]:
+    if not install_dir.exists():
+        return None
+
+    for file in install_dir.iterdir():
+        if file.is_file() and not file.name.endswith(".zsync"):
+            return file
+
+    return None
+
+
+def _try_zsync_update(appimage_path: Path, zsync_url: str) -> bool:
+    import shutil
+    import subprocess
+
+    if not shutil.which("zsync"):
+        return False
+
+    try:
+        response = requests.head(zsync_url, timeout=10)
+        if response.status_code != 200:
+            return False
+
+        result = subprocess.run(
+            ["zsync", "-o", str(appimage_path), zsync_url],
+            capture_output=True,
+            timeout=300,
+            cwd=str(appimage_path.parent),
+        )
+
+        if result.returncode == 0:
+            appimage_path.chmod(0o755)
+            return True
+
+    except Exception:
+        pass
+
+    return False
 
 
 def download_game_file(

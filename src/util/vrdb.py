@@ -28,7 +28,7 @@ class GameSource:
         if self.scheme == "arv":
             return f"https://arweave.net/{self.identifier}"
         elif self.scheme == "switch":
-            return f"https://dl.R1.com/{self.identifier}.zip"
+            return f"https://dl.romheaven.com/{self.identifier}.zip"
         elif self.scheme in ["http", "https"]:
             return self.original_uri
         return ""
@@ -99,13 +99,7 @@ class VRDBConsole:
 
             return cls(emulator=emulator, console=console, games=games)
 
-        except Exception as e:
-            import sys
-
-            print(
-                f"[vrdb] error loading {path.name}: {type(e).__name__}: {e}",
-                file=sys.stderr,
-            )
+        except Exception:
             return None
 
 
@@ -116,7 +110,7 @@ class VRDBDatabase:
 
         self.db_dir = db_dir
         self.consoles: Dict[str, VRDBConsole] = {}
-        self.R1_consoles: List[str] = []
+        self.romheaven_consoles: List[str] = []
 
         self._load_database()
 
@@ -125,30 +119,24 @@ class VRDBDatabase:
             self.db_dir.mkdir(parents=True, exist_ok=True)
             return
 
-        R1_file = self.db_dir / "R1.vrdb"
-        if R1_file.exists():
+        romheaven_file = self.db_dir / "romheaven.vrdb"
+        if romheaven_file.exists():
             try:
-                with open(R1_file, "r") as f:
+                with open(romheaven_file, "r") as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#"):
-                            self.R1_consoles.append(line)
+                            self.romheaven_consoles.append(line)
             except Exception:
                 pass
 
         for vrdb_file in self.db_dir.glob("*.vrdb"):
-            if vrdb_file.name == "R1.vrdb":
+            if vrdb_file.name == "romheaven.vrdb":
                 continue
 
             console = VRDBConsole.from_file(vrdb_file)
             if console and console.console.code:
                 self.consoles[console.console.code] = console
-            else:
-                import sys
-
-                print(
-                    f"[vrdb] warning: failed to load {vrdb_file.name}", file=sys.stderr
-                )
 
     def get_console(self, code: str) -> Optional[VRDBConsole]:
         return self.consoles.get(code.upper())
@@ -185,8 +173,8 @@ class VRDBDatabase:
 
         return console.games.get(game_name)
 
-    def is_R1_compatible(self, console_name: str) -> bool:
-        return console_name in self.R1_consoles
+    def is_romheaven_compatible(self, console_name: str) -> bool:
+        return console_name in self.romheaven_consoles
 
 
 _vrdb = None

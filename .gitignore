@@ -40,3 +40,7 @@ venv/
 
 .DS_Store
 test.py
+
+# files related to another project, see vretro-gui
+gui.py
+flet_main.py
