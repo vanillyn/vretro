@@ -1,10 +1,11 @@
+import random
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import flet as ft
 
 if TYPE_CHECKING:
-    from ..app import VRetroApp
+    from gui.app import VRetroApp
 
 
 class ConsoleView:
@@ -33,25 +34,16 @@ class ConsoleView:
 
         self._populate_grid()
 
-        header_images = self._create_header_images()
-        console_info = self._create_console_info()
-
-        header = ft.Container(
-            content=ft.Column(
-                [
-                    ft.Stack([header_images, console_info])
-                    if header_images
-                    else console_info,
-                    ft.Container(height=20),
-                    search_bar,
-                ]
-            ),
-            padding=30,
-        )
+        header = self._create_header()
 
         return ft.Column(
             [
                 header,
+                ft.Container(height=20),
+                ft.Container(
+                    content=search_bar, padding=ft.padding.only(left=30, right=30)
+                ),
+                ft.Container(height=10),
                 ft.Container(
                     content=self.game_grid,
                     padding=ft.padding.only(left=30, right=30, bottom=30),
@@ -61,75 +53,146 @@ class ConsoleView:
             spacing=0,
         )
 
-    def _create_header_images(self) -> ft.Control:
+    def _create_header(self) -> ft.Control:
         console_dir = self.app.library.console_root / self.console_meta.name
         hero_path = console_dir / "graphics" / "hero.png"
         logo_path = console_dir / "graphics" / "logo.png"
 
-        sample_images = []
-        for game in self.games[:6]:
-            grid_path = game.path / "graphics" / "grid.png"
-            if grid_path.exists():
-                sample_images.append(str(grid_path))
+        if not hero_path.exists():
+            hero_path = self._get_random_game_hero()
 
-        if not hero_path.exists() and not sample_images:
-            return None
-
-        if hero_path.exists():
-            return ft.Container(
-                content=ft.Image(
+        if hero_path and hero_path.exists():
+            stack_children = [
+                ft.Image(
                     src=str(hero_path),
                     width=float("inf"),
-                    height=200,
+                    height=300,
                     fit=ft.BoxFit.COVER,
                 ),
-                border_radius=12,
-                clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-            )
+                ft.Container(
+                    width=float("inf"),
+                    height=300,
+                    gradient=ft.LinearGradient(
+                        begin=ft.Alignment.TOP_CENTER,
+                        end=ft.Alignment.BOTTOM_CENTER,
+                        colors=["#00000000", "#000000CC"],
+                    ),
+                ),
+            ]
 
-        if sample_images:
-            grid = ft.GridView(
-                runs_count=3,
-                max_extent=150,
-                spacing=5,
-                run_spacing=5,
-                height=200,
-            )
-
-            for img_path in sample_images:
-                grid.controls.append(
+            if logo_path.exists():
+                stack_children.append(
                     ft.Container(
-                        content=ft.Image(src=img_path, fit=ft.BoxFit.COVER),
-                        border_radius=8,
-                        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+                        content=ft.Image(
+                            src=str(logo_path),
+                            width=400,
+                            fit=ft.BoxFit.CONTAIN,
+                        ),
+                        alignment=ft.Alignment.BOTTOM_LEFT,
+                        padding=40,
+                    )
+                )
+            else:
+                stack_children.append(
+                    ft.Container(
+                        content=ft.Text(
+                            self.console_meta.name,
+                            size=48,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.WHITE,
+                        ),
+                        alignment=ft.Alignment.BOTTOM_LEFT,
+                        padding=40,
                     )
                 )
 
-            return ft.Container(
-                content=grid,
-                border_radius=12,
-                clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            stack_children.append(
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.IconButton(
+                                icon=ft.Icons.INFO_OUTLINE,
+                                icon_color=ft.Colors.WHITE,
+                                on_click=lambda _: self._show_console_info(),
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.IMAGE_SEARCH,
+                                icon_color=ft.Colors.WHITE,
+                                on_click=lambda _: self._download_console_artwork(),
+                                tooltip="download console artwork",
+                            ),
+                        ]
+                    ),
+                    alignment=ft.Alignment.TOP_RIGHT,
+                    padding=20,
+                )
             )
 
-        return None
+            return ft.Stack(stack_children, width=float("inf"), height=300)
 
-    def _create_console_info(self) -> ft.Control:
-        name = self.console_meta.name if self.console_meta else self.app.current_console
+        if logo_path.exists():
+            return ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Image(
+                            src=str(logo_path),
+                            width=400,
+                            fit=ft.BoxFit.CONTAIN,
+                        ),
+                        ft.Container(expand=True),
+                        ft.IconButton(
+                            icon=ft.Icons.INFO_OUTLINE,
+                            on_click=lambda _: self._show_console_info(),
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.IMAGE_SEARCH,
+                            on_click=lambda _: self._download_console_artwork(),
+                            tooltip="download console artwork",
+                        ),
+                    ]
+                ),
+                padding=40,
+            )
 
-        return ft.Row(
-            [
-                ft.Text(
-                    value=name,
-                    size=32,
-                    weight=ft.FontWeight.BOLD,
-                ),
-                ft.Container(expand=True),
-                ft.IconButton(
-                    icon=ft.Icons.INFO_OUTLINE,
-                    on_click=lambda _: self._show_console_info(),
-                ),
-            ]
+        return ft.Container(
+            content=ft.Row(
+                [
+                    ft.Text(
+                        self.console_meta.name,
+                        size=48,
+                        weight=ft.FontWeight.BOLD,
+                    ),
+                    ft.Container(expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.INFO_OUTLINE,
+                        on_click=lambda _: self._show_console_info(),
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.IMAGE_SEARCH,
+                        on_click=lambda _: self._download_console_artwork(),
+                        tooltip="download console artwork",
+                    ),
+                ]
+            ),
+            padding=40,
         )
+
+    def _get_random_game_hero(self) -> Path:
+        if not self.games:
+            return None
+
+        game = random.choice(self.games)
+        hero_path = game.path / "graphics" / "hero.png"
+
+        if hero_path.exists():
+            return hero_path
+
+        for game in self.games:
+            hero_path = game.path / "graphics" / "hero.png"
+            if hero_path.exists():
+                return hero_path
+
+        return None
 
     def _populate_grid(self) -> None:
         self.game_grid.controls.clear()
@@ -269,3 +332,32 @@ class ConsoleView:
 
         dialog = ConsoleInfoDialog(self.app.page, self.console_meta, self.app.library)
         self.app.page.show_dialog(dialog.create())
+
+    def _download_console_artwork(self) -> None:
+        if not self.app.steamgrid.api_key:
+            self._show_error(
+                "api key required",
+                "steamgriddb api key not configured.\n\nadd it in settings.",
+            )
+            return
+
+        from ..elements.dialogs import ConsoleArtworkDialog
+
+        dialog = ConsoleArtworkDialog(
+            self.app.page,
+            self.console_meta,
+            self.app.steamgrid,
+            self.app.library,
+            lambda: self.app.show_console(self.app.current_console),
+        )
+        self.app.page.show_dialog(dialog.create())
+
+    def _show_error(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[
+                ft.TextButton("ok", on_click=lambda _: self.app.page.pop_dialog()),
+            ],
+        )
+        self.app.page.show_dialog(dialog)

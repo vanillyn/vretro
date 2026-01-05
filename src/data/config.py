@@ -19,6 +19,9 @@ class VRetroConfig:
     igdb_client_id: Optional[str] = None
     igdb_client_secret: Optional[str] = None
     download_sources: List[str] = None
+    steamgrid_api_key: Optional[str] = None
+    theme_mode: str = "system"
+    primary_color: Optional[str] = None
 
     @classmethod
     def default(cls):
@@ -33,6 +36,7 @@ class VRetroConfig:
             show_thumbnails=True,
             thumbnail_width=320,
             preferred_region="NA",
+            theme_mode="system",
         )
 
     @classmethod
@@ -51,6 +55,9 @@ class VRetroConfig:
 
             if "ignored_directories" not in data:
                 data["ignored_directories"] = ["vretro"]
+
+            if "theme_mode" not in data:
+                data["theme_mode"] = "system"
 
             return cls(**data)
         except (json.JSONDecodeError, TypeError, KeyError):

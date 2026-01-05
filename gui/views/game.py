@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 if TYPE_CHECKING:
-    from ..app import VRetroApp
+    from gui.app import VRetroApp
 
 from src.util.launch import launch_game
 
@@ -147,37 +147,32 @@ class GameView:
         )
 
         return ft.Container(
-            content=ft.Column(
+            content=ft.Row(
                 [
+                    ft.FilledButton(
+                        "launch",
+                        icon=ft.Icons.PLAY_ARROW,
+                        on_click=lambda _: self._launch(),
+                        height=70,
+                        style=ft.ButtonStyle(
+                            text_style=ft.TextStyle(size=24, weight=ft.FontWeight.BOLD),
+                        ),
+                    ),
+                    options_menu,
+                    ft.IconButton(
+                        icon=ft.Icons.IMAGE_SEARCH,
+                        on_click=lambda _: self._download_artwork(),
+                        tooltip="download artwork",
+                    ),
+                    ft.Container(expand=True),
                     ft.Text(
-                        f"play time: {playtime_str}",
+                        f"played for {playtime_str}",
                         size=16,
                         color=ft.Colors.ON_SURFACE_VARIANT,
                     ),
-                    ft.Container(height=15),
-                    ft.Row(
-                        [
-                            ft.FilledButton(
-                                "launch",
-                                icon=ft.Icons.PLAY_ARROW,
-                                on_click=lambda _: self._launch(),
-                                height=60,
-                                style=ft.ButtonStyle(
-                                    text_style=ft.TextStyle(
-                                        size=20, weight=ft.FontWeight.BOLD
-                                    ),
-                                ),
-                            ),
-                            options_menu,
-                            ft.IconButton(
-                                icon=ft.Icons.IMAGE_SEARCH,
-                                on_click=lambda _: self._download_artwork(),
-                                tooltip="download artwork",
-                            ),
-                        ],
-                        spacing=10,
-                    ),
-                ]
+                ],
+                spacing=10,
+                alignment=ft.MainAxisAlignment.START,
             ),
             padding=40,
         )

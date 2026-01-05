@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 if TYPE_CHECKING:
-    from ..app import VRetroApp
+    from gui.app import VRetroApp
 
 
 class Sidebar:

@@ -5,7 +5,7 @@ from typing import Callable, Optional
 
 import flet as ft
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.data.config import VRetroConfig
 from src.data.console import get_console_metadata
@@ -62,12 +62,154 @@ class FirstTimeSetupDialog:
 
         config = VRetroConfig.default()
         config.games_directory = games_dir
-        if steamgrid_key:
-            config.__dict__["steamgrid_api_key"] = steamgrid_key
+        config.steamgrid_api_key = steamgrid_key
         config.save()
 
         self.page.pop_dialog()
         self.on_complete()
+
+
+class ConsoleArtworkDialog:
+    def __init__(self, page, console_meta, steamgrid, library, on_download) -> None:
+        self.page = page
+        self.console_meta = console_meta
+        self.steamgrid = steamgrid
+        self.library = library
+        self.on_download = on_download
+
+    def create(self):
+        self.search_input = ft.TextField(
+            label="search",
+            value=self.console_meta.name,
+        )
+
+        self.results_grids = [
+            ft.GridView(
+                expand=True,
+                runs_count=3,
+                max_extent=200,
+                child_aspect_ratio=1.0,
+                spacing=10,
+                run_spacing=10,
+            )
+            for _ in range(3)
+        ]
+
+        tabs = ft.Tabs(
+            selected_index=0,
+            length=3,
+            expand=True,
+            content=ft.Column(
+                expand=True,
+                controls=[
+                    ft.TabBar(
+                        tabs=[
+                            ft.Tab(label="hero"),
+                            ft.Tab(label="logo"),
+                            ft.Tab(label="icon"),
+                        ]
+                    ),
+                    ft.TabBarView(expand=True, controls=self.results_grids),
+                ],
+            ),
+            on_change=lambda _: self._on_search(None),
+        )
+
+        self.tabs = tabs
+
+        return ft.AlertDialog(
+            title=ft.Text("download console artwork"),
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                self.search_input,
+                                ft.IconButton(
+                                    icon=ft.Icons.SEARCH,
+                                    on_click=self._on_search,
+                                ),
+                            ]
+                        ),
+                        tabs,
+                        ft.Container(height=10),
+                    ]
+                ),
+                width=700,
+                height=600,
+            ),
+            actions=[
+                ft.TextButton("close", on_click=lambda _: self.page.pop_dialog()),
+            ],
+            on_dismiss=lambda _: self.page.pop_dialog(),
+        )
+
+    def _on_search(self, e) -> None:
+        selected_index = self.tabs.selected_index
+        results = self.results_grids[selected_index]
+        results.controls.clear()
+
+        games = self.steamgrid.search_game(self.search_input.value)
+
+        if not games:
+            results.controls.append(ft.Text("no results found"))
+            self.page.update()
+            return
+
+        game_id = games[0].get("id")
+
+        asset_types = ["heroes", "logos", "icons"]
+        file_names = ["hero", "logo", "icon"]
+        asset_type = asset_types[selected_index]
+        file_name = file_names[selected_index]
+
+        assets = self.steamgrid.get_assets(game_id, asset_type)
+
+        for asset in assets[:12]:
+            url = asset.get("thumb") or asset.get("url")
+            if not url:
+                continue
+
+            card = ft.Container(
+                content=ft.Image(src=url, fit=ft.BoxFit.COVER),
+                border_radius=8,
+                ink=True,
+                on_click=lambda _,
+                full_url=asset.get("url"),
+                fn=file_name: self._download(full_url, fn),
+            )
+            results.controls.append(card)
+
+        self.page.update()
+
+    def _download(self, url: str, asset_type: str) -> None:
+        console_dir = self.library.console_root / self.console_meta.name
+        graphics_dir = console_dir / "graphics"
+        graphics_dir.mkdir(parents=True, exist_ok=True)
+        dest = graphics_dir / f"{asset_type}.png"
+
+        if self.steamgrid.download_asset(url, dest):
+            self.page.pop_dialog()
+            self._show_info("success", f"downloaded {asset_type}")
+            self.on_download()
+        else:
+            self._show_error("error", "download failed")
+
+    def _show_error(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog())],
+        )
+        self.page.show_dialog(dialog)
+
+    def _show_info(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog())],
+        )
+        self.page.show_dialog(dialog)
 
 
 class SettingsDialog:
@@ -113,14 +255,31 @@ class SettingsDialog:
 
         self.steamgrid_key = ft.TextField(
             label="steamgriddb api key",
-            value=getattr(self.config, "steamgrid_api_key", None) or "",
+            value=self.config.steamgrid_api_key or "",
             password=True,
             can_reveal_password=True,
         )
 
+        self.theme_dropdown = ft.Dropdown(
+            label="theme mode",
+            value=self.config.theme_mode or "system",
+            options=[
+                ft.dropdown.Option("light", "light"),
+                ft.dropdown.Option("dark", "dark"),
+                ft.dropdown.Option("system", "system (follow xresources)"),
+                ft.dropdown.Option("dynamic", "dynamic (from artwork)"),
+            ],
+        )
+
+        self.primary_color_input = ft.TextField(
+            label="custom primary color (hex)",
+            value=self.config.primary_color or "",
+            hint_text="#1976d2",
+        )
+
         tabs = ft.Tabs(
             selected_index=0,
-            length=3,
+            length=4,
             expand=True,
             content=ft.Column(
                 expand=True,
@@ -128,6 +287,7 @@ class SettingsDialog:
                     ft.TabBar(
                         tabs=[
                             ft.Tab(label="general"),
+                            ft.Tab(label="theme"),
                             ft.Tab(label="igdb api"),
                             ft.Tab(label="steamgriddb"),
                         ]
@@ -141,6 +301,27 @@ class SettingsDialog:
                                         self.games_dir_input,
                                         self.fullscreen_check,
                                         self.region_dropdown,
+                                    ]
+                                ),
+                                padding=20,
+                            ),
+                            ft.Container(
+                                content=ft.Column(
+                                    [
+                                        self.theme_dropdown,
+                                        self.primary_color_input,
+                                        ft.Text(
+                                            "theme mode:",
+                                            size=12,
+                                            color=ft.Colors.ON_SURFACE_VARIANT,
+                                        ),
+                                        ft.Text(
+                                            "• system: follows xresources theme\n"
+                                            "• dynamic: extracts colors from game/console artwork\n"
+                                            "• light/dark: fixed theme",
+                                            size=11,
+                                            color=ft.Colors.ON_SURFACE_VARIANT,
+                                        ),
                                     ]
                                 ),
                                 padding=20,
@@ -177,6 +358,13 @@ class SettingsDialog:
         self.config.games_directory = self.games_dir_input.value
         self.config.fullscreen = self.fullscreen_check.value
         self.config.preferred_region = self.region_dropdown.value
+        self.config.theme_mode = self.theme_dropdown.value
+
+        primary_color = self.primary_color_input.value.strip()
+        if primary_color and primary_color.startswith("#"):
+            self.config.primary_color = primary_color
+        else:
+            self.config.primary_color = None
 
         client_id = self.igdb_client_id.value.strip()
         client_secret = self.igdb_client_secret.value.strip()
@@ -184,8 +372,7 @@ class SettingsDialog:
         self.config.igdb_client_secret = client_secret if client_secret else None
 
         sg_key = self.steamgrid_key.value.strip()
-        if sg_key:
-            self.config.__dict__["steamgrid_api_key"] = sg_key
+        self.config.steamgrid_api_key = sg_key if sg_key else None
 
         self.config.save()
         self.page.pop_dialog()
@@ -584,7 +771,7 @@ class ArtworkDialog:
                 continue
 
             card = ft.Container(
-                content=ft.Image(src=url, fit=ft.ImageFit.COVER),
+                content=ft.Image(src=url, fit=ft.BoxFit.COVER),
                 border_radius=8,
                 ink=True,
                 on_click=lambda _,
@@ -654,7 +841,7 @@ class ConsoleInfoDialog:
                         src=str(hero_path),
                         width=600,
                         height=300,
-                        fit=ft.ImageFit.COVER,
+                        fit=ft.BoxFit.COVER,
                     ),
                     ft.Container(
                         width=600,
@@ -669,7 +856,7 @@ class ConsoleInfoDialog:
                         content=ft.Image(
                             src=str(logo_path),
                             width=300,
-                            fit=ft.ImageFit.CONTAIN,
+                            fit=ft.BoxFit.CONTAIN,
                         )
                         if logo_path.exists()
                         else ft.Text(

@@ -19,6 +19,7 @@ from .elements.dialogs import (
 )
 from .elements.sidebar import Sidebar
 from .util.steamgrid import SteamGridDB
+from .util.theme import ThemeManager
 from .views.console import ConsoleView
 from .views.game import GameView
 from .views.welcome import WelcomeView
@@ -29,7 +30,6 @@ class VRetroApp:
         self.page = page
         self.page.title = "vretro"
         self.page.padding = 0
-        self.page.theme_mode = ft.ThemeMode.DARK
 
         config_path = get_config_path()
         if not config_path.exists():
@@ -37,20 +37,33 @@ class VRetroApp:
             return
 
         self._initialize()
+        self._apply_theme()
         self._setup_ui()
         self._load_library()
 
     def _initialize(self) -> None:
         self.config = VRetroConfig.load()
+        self.theme_manager = ThemeManager()
+        self.theme_manager.set_theme_mode(self.config.theme_mode)
+        if self.config.primary_color:
+            self.theme_manager.set_primary_color(self.config.primary_color)
+
         self.library = GameLibrary(self.config.get_games_root())
         self.sources = SourceManager()
         self.db = OnlineDatabase(self.config)
         self.steamgrid = SteamGridDB()
-        self.steamgrid.api_key = getattr(self.config, "steamgrid_api_key", None)
+        self.steamgrid.api_key = self.config.steamgrid_api_key
 
         self.current_console: Optional[str] = None
         self.current_game = None
         self.all_games: list = []
+
+    def _apply_theme(self) -> None:
+        self.page.theme_mode = self.theme_manager.get_theme_mode()
+        theme = self.theme_manager.create_theme()
+        self.page.theme = theme
+        self.page.dark_theme = theme
+        self.page.update()
 
     def _show_first_time_setup(self) -> None:
         dialog = FirstTimeSetupDialog(self.page, self._on_setup_complete)
@@ -58,6 +71,7 @@ class VRetroApp:
 
     def _on_setup_complete(self) -> None:
         self._initialize()
+        self._apply_theme()
         self._setup_ui()
         self._load_library()
 
@@ -84,6 +98,11 @@ class VRetroApp:
         self.sidebar.refresh()
 
     def _show_welcome(self) -> None:
+        self.current_console = None
+        self.current_game = None
+        if self.config.theme_mode == "dynamic":
+            self.theme_manager.set_dynamic_source(None)
+            self._apply_theme()
         view = WelcomeView(self)
         self.main_content.content = view.create()
         self.page.update()
@@ -96,6 +115,13 @@ class VRetroApp:
         games = self.library.filter_by_console(console_code)
         self.all_games = sorted(games, key=lambda g: g.metadata.get_title())
 
+        if self.config.theme_mode == "dynamic":
+            console_dir = self.library.console_root / console_meta.name
+            hero_path = console_dir / "graphics" / "hero.png"
+            if hero_path.exists():
+                self.theme_manager.set_dynamic_source(hero_path)
+                self._apply_theme()
+
         view = ConsoleView(self, console_meta, self.all_games)
         self.main_content.content = view.create()
         self.sidebar.refresh()
@@ -103,6 +129,13 @@ class VRetroApp:
 
     def show_game(self, game) -> None:
         self.current_game = game
+
+        if self.config.theme_mode == "dynamic":
+            hero_path = game.path / "graphics" / "hero.png"
+            if hero_path.exists():
+                self.theme_manager.set_dynamic_source(hero_path)
+                self._apply_theme()
+
         view = GameView(self, game)
         self.main_content.content = view.create()
         self.sidebar.refresh()
@@ -113,6 +146,12 @@ class VRetroApp:
         self.page.show_dialog(dialog.create())
 
     def _on_settings_saved(self) -> None:
+        self.config = VRetroConfig.load()
+        self.theme_manager.set_theme_mode(self.config.theme_mode)
+        if self.config.primary_color:
+            self.theme_manager.set_primary_color(self.config.primary_color)
+        self._apply_theme()
+        self.steamgrid.api_key = self.config.steamgrid_api_key
         self.library = GameLibrary(self.config.get_games_root())
         self._load_library()
 

@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 import os
 import platform
-import sys
+from calendar import c
 from pathlib import Path
 from typing import List, Tuple
 
 import click
-import flet as ft
 from rich.console import Console
 from rich.table import Table
-
-from flet_main import main as flet_main
 
 try:
     from PIL import Image
@@ -128,10 +125,6 @@ def cli(
 ):
     """vretro - downloader and library manager for abandonware"""
 
-    if len(sys.argv) == 1:
-        ft.app(target=flet_main)
-        return
-
     if debug:
         import logging
 
@@ -191,6 +184,11 @@ def cli(
 
         igdb_status = "configured" if config.igdb_client_id else "not configured"
         term.print(f"[bold]igdb api:[/bold] {igdb_status}")
+
+        steamgriddb_status = (
+            "configured" if config.steamgrid_api_key else "not configured"
+        )
+        term.print(f"[bold]steamgriddb api:[/bold] {steamgriddb_status}")
 
         if config.download_sources:
             term.print(
@@ -423,7 +421,7 @@ def cli(
             games = sources.search_games(console_code_upper, game_name)
 
             if not games:
-                term.print("[yellow]no games found[/yellow]")
+                term.print(f"[yellow]no games found[/yellow]")
                 return
 
             if len(games) > 1:
