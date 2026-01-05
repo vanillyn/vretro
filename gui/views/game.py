@@ -1,0 +1,313 @@
+import subprocess
+from typing import TYPE_CHECKING
+
+import flet as ft
+
+if TYPE_CHECKING:
+    from ..app import VRetroApp
+
+from src.util.launch import launch_game
+
+
+class GameView:
+    def __init__(self, app: "VRetroApp", game) -> None:
+        self.app = app
+        self.game = game
+        self.show_details = False
+
+    def create(self) -> ft.Column:
+        graphics_dir = self.game.path / "graphics"
+        hero_path = graphics_dir / "hero.png"
+        logo_path = graphics_dir / "logo.png"
+
+        if not hero_path.exists():
+            hero_path = self.game.path / "assets" / "hero.png"
+        if not logo_path.exists():
+            logo_path = self.game.path / "assets" / "logo.png"
+
+        hero_section = self._create_hero(hero_path, logo_path)
+        launch_section = self._create_launch_section()
+        details_section = self._create_details_section()
+
+        return ft.Column(
+            [
+                hero_section,
+                launch_section,
+                details_section,
+            ],
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            spacing=0,
+        )
+
+    def _create_hero(self, hero_path, logo_path) -> ft.Container:
+        if hero_path.exists():
+            stack_children = [
+                ft.Image(
+                    src=str(hero_path),
+                    width=float("inf"),
+                    height=400,
+                    fit=ft.BoxFit.COVER,
+                ),
+                ft.Container(
+                    width=float("inf"),
+                    height=400,
+                    gradient=ft.LinearGradient(
+                        begin=ft.Alignment.TOP_CENTER,
+                        end=ft.Alignment.BOTTOM_CENTER,
+                        colors=["#00000000", "#000000CC"],
+                    ),
+                ),
+            ]
+
+            if logo_path.exists():
+                stack_children.append(
+                    ft.Container(
+                        content=ft.Image(
+                            src=str(logo_path),
+                            width=400,
+                            fit=ft.BoxFit.CONTAIN,
+                        ),
+                        alignment=ft.Alignment.BOTTOM_LEFT,
+                        padding=40,
+                    )
+                )
+            else:
+                stack_children.append(
+                    ft.Container(
+                        content=ft.Text(
+                            self.game.metadata.get_title(),
+                            size=48,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.WHITE,
+                        ),
+                        alignment=ft.Alignment.BOTTOM_LEFT,
+                        padding=40,
+                    )
+                )
+
+            return ft.Stack(stack_children, width=float("inf"), height=400)
+
+        if logo_path.exists():
+            return ft.Container(
+                content=ft.Image(
+                    src=str(logo_path),
+                    width=400,
+                    fit=ft.BoxFit.CONTAIN,
+                ),
+                padding=40,
+            )
+
+        return ft.Container(
+            content=ft.Text(
+                self.game.metadata.get_title(),
+                size=48,
+                weight=ft.FontWeight.BOLD,
+            ),
+            padding=40,
+        )
+
+    def _create_launch_section(self) -> ft.Container:
+        hours = getattr(self.game.metadata, "playtime", 0) // 3600
+        minutes = (getattr(self.game.metadata, "playtime", 0) % 3600) // 60
+        playtime_str = (
+            f"{hours}h {minutes}m" if hours > 0 or minutes > 0 else "not played yet"
+        )
+
+        options_menu = ft.PopupMenuButton(
+            icon=ft.Icons.ARROW_DROP_DOWN,
+            items=[
+                ft.PopupMenuItem(
+                    "customize game",
+                    icon=ft.Icons.EDIT,
+                    on_click=lambda _: self._edit_metadata(),
+                ),
+                ft.PopupMenuItem(
+                    "manage saves",
+                    icon=ft.Icons.SAVE,
+                    on_click=lambda _: self._open_saves(),
+                ),
+                ft.PopupMenuItem(
+                    "open game files",
+                    icon=ft.Icons.FOLDER_OPEN,
+                    on_click=lambda _: self._open_files(),
+                ),
+                ft.PopupMenuItem(),
+                ft.PopupMenuItem(
+                    "launch in fullscreen",
+                    icon=ft.Icons.FULLSCREEN,
+                    on_click=lambda _: self._launch(fullscreen=True),
+                ),
+                ft.PopupMenuItem(
+                    "launch without custom variables",
+                    icon=ft.Icons.PLAY_ARROW,
+                    on_click=lambda _: self._launch(debug=True),
+                ),
+            ],
+        )
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(
+                        f"play time: {playtime_str}",
+                        size=16,
+                        color=ft.Colors.ON_SURFACE_VARIANT,
+                    ),
+                    ft.Container(height=15),
+                    ft.Row(
+                        [
+                            ft.FilledButton(
+                                "launch",
+                                icon=ft.Icons.PLAY_ARROW,
+                                on_click=lambda _: self._launch(),
+                                height=60,
+                                style=ft.ButtonStyle(
+                                    text_style=ft.TextStyle(
+                                        size=20, weight=ft.FontWeight.BOLD
+                                    ),
+                                ),
+                            ),
+                            options_menu,
+                            ft.IconButton(
+                                icon=ft.Icons.IMAGE_SEARCH,
+                                on_click=lambda _: self._download_artwork(),
+                                tooltip="download artwork",
+                            ),
+                        ],
+                        spacing=10,
+                    ),
+                ]
+            ),
+            padding=40,
+        )
+
+    def _create_details_section(self) -> ft.Container:
+        publisher = (
+            list(self.game.metadata.publisher.values())[0]
+            if self.game.metadata.publisher
+            else "unknown"
+        )
+
+        self.details_content = ft.Column(
+            [
+                ft.Text(
+                    f"{self.game.metadata.year}",
+                    size=18,
+                ),
+                ft.Text(
+                    f"{self.game.metadata.console}",
+                    size=18,
+                ),
+                ft.Text(
+                    f"{publisher}",
+                    size=18,
+                ),
+            ],
+            visible=self.show_details,
+            spacing=10,
+        )
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Container(
+                        content=ft.Row(
+                            [
+                                ft.Icon(ft.Icons.INFO_OUTLINE, size=20),
+                                ft.Text("details", size=18, weight=ft.FontWeight.W_500),
+                                ft.Container(expand=True),
+                                ft.Icon(
+                                    ft.Icons.EXPAND_MORE
+                                    if not self.show_details
+                                    else ft.Icons.EXPAND_LESS,
+                                    size=20,
+                                ),
+                            ],
+                        ),
+                        ink=True,
+                        on_click=lambda _: self._toggle_details(),
+                    ),
+                    self.details_content,
+                ]
+            ),
+            padding=ft.padding.only(left=40, right=40, bottom=40),
+        )
+
+    def _toggle_details(self) -> None:
+        self.show_details = not self.show_details
+        self.details_content.visible = self.show_details
+        self.app.page.update()
+
+    def _launch(self, fullscreen: bool = None, debug: bool = False) -> None:
+        success = launch_game(
+            self.game,
+            self.app.config,
+            self.app.library,
+            fullscreen=fullscreen,
+            verbose=False,
+            debug=debug,
+        )
+
+        if not success:
+            self._show_error(
+                "launch failed", f"couldn't launch {self.game.metadata.get_title()}"
+            )
+
+    def _edit_metadata(self) -> None:
+        from ..elements.dialogs import EditMetadataDialog
+
+        dialog = EditMetadataDialog(
+            self.app.page, self.game, lambda: self.app.show_game(self.game)
+        )
+        self.app.page.show_dialog(dialog.create())
+
+    def _open_saves(self) -> None:
+        if self.game.saves_path.exists():
+            subprocess.Popen(["xdg-open", str(self.game.saves_path)])
+        else:
+            self._show_info("no saves", "no save directory found")
+
+    def _open_files(self) -> None:
+        if self.game.resources_path.exists():
+            subprocess.Popen(["xdg-open", str(self.game.resources_path)])
+        else:
+            self._show_info("not found", "resources directory not found")
+
+    def _download_artwork(self) -> None:
+        if not self.app.steamgrid.api_key:
+            self._show_error(
+                "api key required",
+                "steamgriddb api key not configured.\n\nadd it in settings.",
+            )
+            return
+
+        from ..elements.dialogs import ArtworkDialog
+
+        dialog = ArtworkDialog(
+            self.app.page,
+            self.game,
+            self.app.steamgrid,
+            lambda: self.app.show_game(self.game),
+        )
+        self.app.page.show_dialog(dialog.create())
+
+    def _show_error(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[
+                ft.TextButton("ok", on_click=lambda _: self.app.page.pop_dialog()),
+            ],
+        )
+        self.app.page.show_dialog(dialog)
+
+    def _show_info(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[
+                ft.TextButton("ok", on_click=lambda _: self.app.page.pop_dialog()),
+            ],
+        )
+        self.app.page.show_dialog(dialog)
