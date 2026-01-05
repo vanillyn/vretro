@@ -43,15 +43,21 @@ class GameView:
     def _create_hero(self, hero_path, logo_path) -> ft.Container:
         if hero_path.exists():
             stack_children = [
-                ft.Image(
-                    src=str(hero_path),
+                ft.Container(
+                    content=ft.Image(
+                        src=str(hero_path),
+                        fit=ft.BoxFit.COVER,
+                    ),
                     width=float("inf"),
                     height=400,
-                    fit=ft.BoxFit.COVER,
+                    top=0,
+                    left=0,
                 ),
                 ft.Container(
                     width=float("inf"),
                     height=400,
+                    top=0,
+                    left=0,
                     gradient=ft.LinearGradient(
                         begin=ft.Alignment.TOP_CENTER,
                         end=ft.Alignment.BOTTOM_CENTER,
@@ -68,8 +74,8 @@ class GameView:
                             width=400,
                             fit=ft.BoxFit.CONTAIN,
                         ),
-                        alignment=ft.Alignment.BOTTOM_LEFT,
-                        padding=40,
+                        bottom=40,
+                        left=40,
                     )
                 )
             else:
@@ -81,8 +87,8 @@ class GameView:
                             weight=ft.FontWeight.BOLD,
                             color=ft.Colors.WHITE,
                         ),
-                        alignment=ft.Alignment.BOTTOM_LEFT,
-                        padding=40,
+                        bottom=40,
+                        left=40,
                     )
                 )
 
@@ -184,23 +190,43 @@ class GameView:
             else "unknown"
         )
 
+        console_meta = self.app.library.get_console_metadata(self.game.metadata.console)
+
+        detail_rows = [
+            self._detail_row(
+                "console",
+                console_meta.name if console_meta else self.game.metadata.console,
+            ),
+            self._detail_row("year", str(self.game.metadata.year)),
+            self._detail_row("publisher", publisher),
+            self._detail_row("region", self.game.metadata.region),
+        ]
+
+        if console_meta:
+            detail_rows.append(self._detail_row("emulator", console_meta.emulator.name))
+
+        dlc_dir = self.game.resources_path / "dlc"
+        if dlc_dir.exists() and any(dlc_dir.iterdir()):
+            detail_rows.append(
+                self._detail_row(
+                    "dlc", f"{len(list(dlc_dir.iterdir()))} files", ft.Icons.EXTENSION
+                )
+            )
+
+        updates_dir = self.game.resources_path / "updates"
+        if updates_dir.exists() and any(updates_dir.iterdir()):
+            detail_rows.append(
+                self._detail_row(
+                    "updates",
+                    f"{len(list(updates_dir.iterdir()))} files",
+                    ft.Icons.SYSTEM_UPDATE,
+                )
+            )
+
         self.details_content = ft.Column(
-            [
-                ft.Text(
-                    f"{self.game.metadata.year}",
-                    size=18,
-                ),
-                ft.Text(
-                    f"{self.game.metadata.console}",
-                    size=18,
-                ),
-                ft.Text(
-                    f"{publisher}",
-                    size=18,
-                ),
-            ],
+            detail_rows,
             visible=self.show_details,
-            spacing=10,
+            spacing=12,
         )
 
         return ft.Container(
@@ -222,11 +248,47 @@ class GameView:
                         ),
                         ink=True,
                         on_click=lambda _: self._toggle_details(),
+                        padding=10,
+                        border_radius=8,
                     ),
                     self.details_content,
                 ]
             ),
             padding=ft.padding.only(left=40, right=40, bottom=40),
+        )
+
+    def _detail_row(self, label: str, value: str, icon=None) -> ft.Container:
+        label_parts = []
+        if icon:
+            label_parts.append(ft.Icon(icon, size=16))
+        label_parts.append(
+            ft.Text(
+                label,
+                size=14,
+                weight=ft.FontWeight.W_500,
+                color=ft.Colors.ON_SURFACE_VARIANT,
+            )
+        )
+
+        return ft.Container(
+            content=ft.Row(
+                [
+                    ft.Container(
+                        content=ft.Row(
+                            label_parts,
+                            spacing=8,
+                        ),
+                        width=120,
+                    ),
+                    ft.Text(
+                        value,
+                        size=14,
+                        weight=ft.FontWeight.W_400,
+                    ),
+                ],
+                spacing=20,
+            ),
+            padding=ft.padding.only(left=10),
         )
 
     def _toggle_details(self) -> None:
@@ -244,7 +306,10 @@ class GameView:
             debug=debug,
         )
 
-        if not success:
+        if success:
+            self.app.library.scan(verbose=False)
+            self.app.show_game(self.game)
+        else:
             self._show_error(
                 "launch failed", f"couldn't launch {self.game.metadata.get_title()}"
             )

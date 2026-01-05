@@ -1,6 +1,7 @@
 from .dialogs import (
     ArtworkDialog,
     ConsoleArtworkDialog,
+    ConsoleConfigDialog,
     ConsoleInfoDialog,
     EditMetadataDialog,
     FirstTimeSetupDialog,
@@ -18,6 +19,7 @@ __all__ = [
     "EditMetadataDialog",
     "ArtworkDialog",
     "ConsoleArtworkDialog",
+    "ConsoleConfigDialog",
     "ConsoleInfoDialog",
     "Sidebar",
 ]

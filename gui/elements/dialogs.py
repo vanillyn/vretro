@@ -1,5 +1,6 @@
 import re
 import sys
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -10,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.data.config import VRetroConfig
 from src.data.console import get_console_metadata
 from src.data.library import CONSOLE_EXTENSIONS, GameMetadata
+from src.util.download import download_emulator
 
 
 class FirstTimeSetupDialog:
@@ -69,6 +71,141 @@ class FirstTimeSetupDialog:
         self.on_complete()
 
 
+class ConsoleConfigDialog:
+    def __init__(self, page, console_meta, library, on_save) -> None:
+        self.page = page
+        self.console_meta = console_meta
+        self.library = library
+        self.on_save = on_save
+
+    def create(self):
+        console_dir = self.library.console_root / self.console_meta.name
+        emulator_dir = console_dir / "emulator"
+
+        emulator_status = (
+            "installed"
+            if emulator_dir.exists() and any(emulator_dir.iterdir())
+            else "not installed"
+        )
+
+        self.status_text = ft.Text(f"status: {emulator_status}")
+        self.progress_bar = ft.ProgressRing(visible=False)
+        self.progress_text = ft.Text("", visible=False)
+
+        content = ft.Column(
+            [
+                ft.Text("emulator", size=18, weight=ft.FontWeight.BOLD),
+                ft.Text(f"name: {self.console_meta.emulator.name}"),
+                ft.Text(f"binary: {self.console_meta.emulator.binary}"),
+                self.status_text,
+                ft.Container(height=20),
+                self.progress_bar,
+                self.progress_text,
+                ft.Container(height=20),
+                ft.Row(
+                    [
+                        ft.FilledButton(
+                            "download emulator",
+                            on_click=lambda _: self._download_emulator(),
+                        ),
+                        ft.OutlinedButton(
+                            "open emulator folder",
+                            on_click=lambda _: self._open_emulator_folder(),
+                        ),
+                    ],
+                    spacing=10,
+                ),
+            ],
+            tight=True,
+        )
+
+        if self.console_meta.emulator.requires_bios:
+            content.controls.insert(
+                5,
+                ft.Column(
+                    [
+                        ft.Text(
+                            "required bios files:", size=14, weight=ft.FontWeight.W_500
+                        ),
+                        *[
+                            ft.Text(f"  • {bios}", size=12)
+                            for bios in self.console_meta.emulator.bios_files
+                        ],
+                    ],
+                    spacing=5,
+                ),
+            )
+
+        return ft.AlertDialog(
+            title=ft.Text(f"{self.console_meta.name} configuration"),
+            content=ft.Container(content=content, width=500),
+            actions=[
+                ft.TextButton("close", on_click=lambda _: self.page.pop_dialog()),
+            ],
+        )
+
+    def _download_emulator(self):
+        if not self.console_meta.emulator.download_url:
+            self._show_error("error", "no download url available")
+            return
+
+        console_dir = self.library.console_root / self.console_meta.name
+        emulator_dir = console_dir / "emulator"
+
+        self.progress_bar.visible = True
+        self.progress_text.visible = True
+        self.progress_text.value = "downloading..."
+        self.page.update()
+
+        def download_thread():
+            success = download_emulator(
+                self.console_meta.code,
+                self.console_meta.emulator.name,
+                self.console_meta.emulator.download_url,
+                emulator_dir,
+            )
+
+            self.progress_bar.visible = False
+            self.progress_text.visible = False
+
+            if success:
+                self.status_text.value = "status: installed"
+                self._show_info("success", "emulator downloaded")
+            else:
+                self._show_error("error", "download failed")
+
+            self.page.update()
+
+        threading.Thread(target=download_thread, daemon=True).start()
+
+    def _open_emulator_folder(self):
+        import subprocess
+
+        console_dir = self.library.console_root / self.console_meta.name
+        emulator_dir = console_dir / "emulator"
+
+        if emulator_dir.exists():
+            subprocess.Popen(["xdg-open", str(emulator_dir)])
+        else:
+            self._show_info("not found", "emulator directory not found")
+
+    def _show_error(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog())],
+        )
+        self.page.show_dialog(dialog)
+
+    def _show_info(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog())],
+        )
+        self.page.show_dialog(dialog)
+
+
 class ConsoleArtworkDialog:
     def __init__(self, page, console_meta, steamgrid, library, on_download) -> None:
         self.page = page
@@ -109,7 +246,10 @@ class ConsoleArtworkDialog:
                             ft.Tab(label="icon"),
                         ]
                     ),
-                    ft.TabBarView(expand=True, controls=self.results_grids),
+                    ft.TabBarView(
+                        expand=True,
+                        controls=self.results_grids,
+                    ),
                 ],
             ),
             on_change=lambda _: self._on_search(None),
@@ -380,10 +520,13 @@ class SettingsDialog:
 
 
 class InstallConsoleDialog:
-    def __init__(self, page: ft.Page, library, sources, on_install: Callable) -> None:
+    def __init__(
+        self, page: ft.Page, library, sources, steamgrid, on_install: Callable
+    ) -> None:
         self.page = page
         self.library = library
         self.sources = sources
+        self.steamgrid = steamgrid
         self.on_install = on_install
 
     def create(self) -> ft.AlertDialog:
@@ -444,9 +587,39 @@ class InstallConsoleDialog:
 
         try:
             console_dir = self.library.create_console(code.upper(), meta)
+
+            def download_artwork():
+                if (
+                    hasattr(self, "steamgrid")
+                    and self.steamgrid
+                    and self.steamgrid.api_key
+                ):
+                    graphics_dir = console_dir / "graphics"
+                    graphics_dir.mkdir(parents=True, exist_ok=True)
+
+                    games = self.steamgrid.search_game(meta.name)
+                    if games and len(games) > 0:
+                        game_id = games[0].get("id")
+
+                        for asset_type, file_name in [
+                            ("heroes", "hero"),
+                            ("logos", "logo"),
+                            ("icons", "icon"),
+                        ]:
+                            assets = self.steamgrid.get_assets(game_id, asset_type)
+                            if assets and len(assets) > 0:
+                                url = assets[0].get("url")
+                                if url:
+                                    dest = graphics_dir / f"{file_name}.png"
+                                    self.steamgrid.download_asset(url, dest)
+
+            import threading
+
+            threading.Thread(target=download_artwork, daemon=True).start()
+
             self._show_info(
                 "success",
-                f"created console: {code.upper()}\n\n{meta.name}\n\nemulator: {meta.emulator.name}",
+                f"created console: {code.upper()}\n\n{meta.name}\n\nemulator: {meta.emulator.name}\n\ndownloading artwork...",
             )
             self.on_install()
         except Exception as e:
@@ -477,6 +650,7 @@ class InstallGameDialog:
         library,
         sources,
         db,
+        steamgrid,
         on_install: Callable,
     ) -> None:
         self.page = page
@@ -484,6 +658,7 @@ class InstallGameDialog:
         self.library = library
         self.sources = sources
         self.db = db
+        self.steamgrid = steamgrid
         self.on_install = on_install
 
     def create(self) -> ft.AlertDialog:
@@ -493,6 +668,8 @@ class InstallGameDialog:
         )
 
         self.game_list = ft.ListView(expand=True, spacing=5)
+        self.progress_bar = ft.ProgressRing(visible=False)
+        self.progress_text = ft.Text("", visible=False)
 
         return ft.AlertDialog(
             title=ft.Text(f"install game - {self.console}"),
@@ -509,6 +686,8 @@ class InstallGameDialog:
                             ]
                         ),
                         self.game_list,
+                        self.progress_bar,
+                        self.progress_text,
                     ]
                 ),
                 width=600,
@@ -539,52 +718,95 @@ class InstallGameDialog:
         self.page.update()
 
     def _install(self, game_name: str, source) -> None:
-        self.page.pop_dialog()
+        self.game_list.controls.clear()
+        self.progress_bar.visible = True
+        self.progress_text.visible = True
+        self.progress_text.value = "downloading game..."
+        self.page.update()
 
-        console_code_upper = self.console.upper()
-        console_meta = self.library.get_console_metadata(console_code_upper)
+        def download_thread():
+            console_code_upper = self.console.upper()
+            console_meta = self.library.get_console_metadata(console_code_upper)
 
-        if not console_meta:
-            self._show_error("error", f"console not installed: {console_code_upper}")
-            return
-
-        console_dir = self.library.console_root / console_meta.name
-        games_dir = console_dir / "games"
-
-        game_slug = re.sub(r"[^\w\s-]", "", game_name.lower())
-        game_slug = re.sub(r"[-\s]+", "-", game_slug).strip("-")
-
-        game_dir = games_dir / game_slug
-        game_dir.mkdir(parents=True, exist_ok=True)
-        (game_dir / "resources").mkdir(exist_ok=True)
-        (game_dir / "saves").mkdir(exist_ok=True)
-        (game_dir / "graphics").mkdir(exist_ok=True)
-
-        download_dir = game_dir / "resources"
-        extension = CONSOLE_EXTENSIONS.get(console_code_upper, "bin")
-        dest_file = download_dir / f"base.{extension}"
-
-        success = self.sources.download_file(source, dest_file, game_name)
-
-        if success:
-            igdb_games = self.db.search_games(game_name, self.console)
-            if igdb_games:
-                igdb_game = igdb_games[0]
-                metadata = GameMetadata(
-                    code=f"{self.console.lower()}-{game_slug}",
-                    console=console_code_upper,
-                    id=igdb_game.id,
-                    title={"NA": igdb_game.name},
-                    publisher={"NA": igdb_game.publisher or "unknown"},
-                    year=igdb_game.year or 0,
-                    region="NA",
+            if not console_meta:
+                self._show_error(
+                    "error", f"console not installed: {console_code_upper}"
                 )
-                metadata.save(game_dir / "metadata.json")
+                return
 
-            self._show_info("success", f"downloaded {game_name}")
-            self.on_install()
-        else:
-            self._show_error("error", "download failed")
+            console_dir = self.library.console_root / console_meta.name
+            games_dir = console_dir / "games"
+
+            game_slug = re.sub(r"[^\w\s-]", "", game_name.lower())
+            game_slug = re.sub(r"[-\s]+", "-", game_slug).strip("-")
+
+            game_dir = games_dir / game_slug
+            game_dir.mkdir(parents=True, exist_ok=True)
+            (game_dir / "resources").mkdir(exist_ok=True)
+            (game_dir / "saves").mkdir(exist_ok=True)
+            (game_dir / "graphics").mkdir(exist_ok=True)
+
+            download_dir = game_dir / "resources"
+            extension = CONSOLE_EXTENSIONS.get(console_code_upper, "bin")
+            dest_file = download_dir / f"base.{extension}"
+
+            success = self.sources.download_file(source, dest_file, game_name)
+
+            if success:
+                self.progress_text.value = "fetching metadata..."
+                self.page.update()
+
+                igdb_games = self.db.search_games(game_name, self.console)
+                if igdb_games:
+                    igdb_game = igdb_games[0]
+                    metadata = GameMetadata(
+                        code=f"{self.console.lower()}-{game_slug}",
+                        console=console_code_upper,
+                        id=igdb_game.id,
+                        title={"NA": igdb_game.name},
+                        publisher={"NA": igdb_game.publisher or "unknown"},
+                        year=igdb_game.year or 0,
+                        region="NA",
+                    )
+                    metadata.save(game_dir / "metadata.json")
+
+                if self.steamgrid and self.steamgrid.api_key:
+                    self.progress_text.value = "downloading artwork..."
+                    self.page.update()
+
+                    graphics_dir = game_dir / "graphics"
+                    graphics_dir.mkdir(parents=True, exist_ok=True)
+
+                    games = self.steamgrid.search_game(game_name)
+                    if games and len(games) > 0:
+                        game_id = games[0].get("id")
+
+                        for asset_type, file_name in [
+                            ("grids", "grid"),
+                            ("heroes", "hero"),
+                            ("logos", "logo"),
+                            ("icons", "icon"),
+                        ]:
+                            assets = self.steamgrid.get_assets(game_id, asset_type)
+                            if assets and len(assets) > 0:
+                                url = assets[0].get("url")
+                                if url:
+                                    dest = graphics_dir / f"{file_name}.png"
+                                    self.steamgrid.download_asset(url, dest)
+
+                self.progress_bar.visible = False
+                self.progress_text.visible = False
+                self.page.pop_dialog()
+                self._show_info("success", f"downloaded {game_name}")
+                self.on_install()
+            else:
+                self.progress_bar.visible = False
+                self.progress_text.visible = False
+                self._show_error("error", "download failed")
+
+            self.page.update()
+
+        threading.Thread(target=download_thread, daemon=True).start()
 
     def _show_error(self, title: str, message: str) -> None:
         dialog = ft.AlertDialog(
@@ -709,7 +931,10 @@ class ArtworkDialog:
                             ft.Tab(label="icon"),
                         ]
                     ),
-                    ft.TabBarView(expand=True, controls=self.results_grids),
+                    ft.TabBarView(
+                        expand=True,
+                        controls=self.results_grids,
+                    ),
                 ],
             ),
             on_change=lambda _: self._on_search(None),
@@ -837,18 +1062,24 @@ class ConsoleInfoDialog:
         if hero_path.exists():
             hero_stack = ft.Stack(
                 [
-                    ft.Image(
-                        src=str(hero_path),
+                    ft.Container(
+                        content=ft.Image(
+                            src=str(hero_path),
+                            fit=ft.BoxFit.COVER,
+                        ),
                         width=600,
                         height=300,
-                        fit=ft.BoxFit.COVER,
+                        top=0,
+                        left=0,
                     ),
                     ft.Container(
                         width=600,
                         height=300,
+                        top=0,
+                        left=0,
                         gradient=ft.LinearGradient(
-                            begin=ft.alignment.top_center,
-                            end=ft.alignment.bottom_center,
+                            begin=ft.Alignment.TOP_CENTER,
+                            end=ft.Alignment.BOTTOM_CENTER,
                             colors=["#00000000", "#000000CC"],
                         ),
                     ),
@@ -865,10 +1096,12 @@ class ConsoleInfoDialog:
                             weight=ft.FontWeight.BOLD,
                             color=ft.Colors.WHITE,
                         ),
-                        alignment=ft.alignment.bottom_left,
-                        padding=20,
+                        bottom=20,
+                        left=20,
                     ),
-                ]
+                ],
+                width=600,
+                height=300,
             )
             hero_content.append(hero_stack)
 

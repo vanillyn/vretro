@@ -54,6 +54,9 @@ class WelcomeView:
     def _populate_consoles(self) -> None:
         self.console_grid.controls.clear()
 
+        if not self.app.library.consoles:
+            self.app.library.scan_consoles(verbose=False)
+
         consoles = sorted(self.app.library.get_consoles())
 
         for console_code in consoles:

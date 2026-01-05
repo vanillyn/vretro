@@ -29,15 +29,23 @@ class Sidebar:
         self.container = ft.Container(
             width=280,
             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+            border_radius=ft.border_radius.only(top_right=20, bottom_right=20),
             content=ft.Column(
                 [
                     ft.Container(
                         content=ft.Row(
                             [
                                 ft.Text("vretro", size=24, weight=ft.FontWeight.BOLD),
+                                ft.Container(expand=True),
+                                ft.IconButton(
+                                    icon=ft.Icons.REFRESH,
+                                    on_click=lambda _: self._refresh_library(),
+                                    tooltip="refresh library",
+                                ),
                                 ft.IconButton(
                                     icon=ft.Icons.SETTINGS,
                                     on_click=lambda _: self.app.show_settings(),
+                                    tooltip="settings",
                                 ),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -61,6 +69,15 @@ class Sidebar:
 
         self.refresh()
         return self.container
+
+    def _refresh_library(self) -> None:
+        self.app.library.scan(verbose=False)
+        self.refresh()
+
+        if self.app.current_console:
+            self.app.show_console(self.app.current_console)
+        else:
+            self.app._show_welcome()
 
     def refresh(self) -> None:
         self.list_view.controls.clear()

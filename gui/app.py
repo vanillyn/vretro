@@ -157,7 +157,7 @@ class VRetroApp:
 
     def show_install_console(self) -> None:
         dialog = InstallConsoleDialog(
-            self.page, self.library, self.sources, self._load_library
+            self.page, self.library, self.sources, self.steamgrid, self._load_library
         )
         self.page.show_dialog(dialog.create())
 
@@ -170,6 +170,7 @@ class VRetroApp:
             self.library,
             self.sources,
             self.db,
+            self.steamgrid,
             lambda: self.show_console(self.current_console),
         )
         self.page.show_dialog(dialog.create())

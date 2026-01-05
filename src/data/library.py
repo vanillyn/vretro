@@ -38,6 +38,9 @@ class GameMetadata:
         region = region or self.region
         return self.title.get(region, list(self.title.values())[0])
 
+    def update_playtime(self, elapsed_seconds: int):
+        self.playtime += elapsed_seconds
+
     def save(self, path: Path):
         with open(path, "w") as f:
             json.dump(self.to_json(), f, indent=2)
@@ -374,7 +377,7 @@ class GameLibrary:
         return None
 
     def get_consoles(self) -> List[str]:
-        return sorted(set(game.metadata.console for game in self.games))
+        return sorted(list(self.consoles.keys()))
 
     def get_console_metadata(self, code: str) -> Optional[ConsoleMetadata]:
         return self.consoles.get(code.upper())

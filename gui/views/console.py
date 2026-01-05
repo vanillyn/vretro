@@ -63,15 +63,21 @@ class ConsoleView:
 
         if hero_path and hero_path.exists():
             stack_children = [
-                ft.Image(
-                    src=str(hero_path),
+                ft.Container(
+                    content=ft.Image(
+                        src=str(hero_path),
+                        fit=ft.BoxFit.COVER,
+                    ),
                     width=float("inf"),
                     height=300,
-                    fit=ft.BoxFit.COVER,
+                    top=0,
+                    left=0,
                 ),
                 ft.Container(
                     width=float("inf"),
                     height=300,
+                    top=0,
+                    left=0,
                     gradient=ft.LinearGradient(
                         begin=ft.Alignment.TOP_CENTER,
                         end=ft.Alignment.BOTTOM_CENTER,
@@ -88,8 +94,8 @@ class ConsoleView:
                             width=400,
                             fit=ft.BoxFit.CONTAIN,
                         ),
-                        alignment=ft.Alignment.BOTTOM_LEFT,
-                        padding=40,
+                        bottom=40,
+                        left=40,
                     )
                 )
             else:
@@ -101,8 +107,8 @@ class ConsoleView:
                             weight=ft.FontWeight.BOLD,
                             color=ft.Colors.WHITE,
                         ),
-                        alignment=ft.Alignment.BOTTOM_LEFT,
-                        padding=40,
+                        bottom=40,
+                        left=40,
                     )
                 )
 
@@ -116,6 +122,12 @@ class ConsoleView:
                                 on_click=lambda _: self._show_console_info(),
                             ),
                             ft.IconButton(
+                                icon=ft.Icons.SETTINGS,
+                                icon_color=ft.Colors.WHITE,
+                                on_click=lambda _: self._show_console_config(),
+                                tooltip="console settings",
+                            ),
+                            ft.IconButton(
                                 icon=ft.Icons.IMAGE_SEARCH,
                                 icon_color=ft.Colors.WHITE,
                                 on_click=lambda _: self._download_console_artwork(),
@@ -123,8 +135,8 @@ class ConsoleView:
                             ),
                         ]
                     ),
-                    alignment=ft.Alignment.TOP_RIGHT,
-                    padding=20,
+                    top=20,
+                    right=20,
                 )
             )
 
@@ -143,6 +155,11 @@ class ConsoleView:
                         ft.IconButton(
                             icon=ft.Icons.INFO_OUTLINE,
                             on_click=lambda _: self._show_console_info(),
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.SETTINGS,
+                            on_click=lambda _: self._show_console_config(),
+                            tooltip="console settings",
                         ),
                         ft.IconButton(
                             icon=ft.Icons.IMAGE_SEARCH,
@@ -166,6 +183,11 @@ class ConsoleView:
                     ft.IconButton(
                         icon=ft.Icons.INFO_OUTLINE,
                         on_click=lambda _: self._show_console_info(),
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.SETTINGS,
+                        on_click=lambda _: self._show_console_config(),
+                        tooltip="console settings",
                     ),
                     ft.IconButton(
                         icon=ft.Icons.IMAGE_SEARCH,
@@ -331,6 +353,17 @@ class ConsoleView:
         from ..elements.dialogs import ConsoleInfoDialog
 
         dialog = ConsoleInfoDialog(self.app.page, self.console_meta, self.app.library)
+        self.app.page.show_dialog(dialog.create())
+
+    def _show_console_config(self) -> None:
+        from ..elements.dialogs import ConsoleConfigDialog
+
+        dialog = ConsoleConfigDialog(
+            self.app.page,
+            self.console_meta,
+            self.app.library,
+            lambda: self.app.show_console(self.app.current_console),
+        )
         self.app.page.show_dialog(dialog.create())
 
     def _download_console_artwork(self) -> None:
