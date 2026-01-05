@@ -62,85 +62,85 @@ class ConsoleView:
             hero_path = self._get_random_game_hero()
 
         if hero_path and hero_path.exists():
-            stack_children = [
-                ft.Container(
-                    content=ft.Image(
-                        src=str(hero_path),
-                        fit=ft.BoxFit.COVER,
-                    ),
-                    width=float("inf"),
-                    height=300,
-                    top=0,
-                    left=0,
-                ),
-                ft.Container(
-                    width=float("inf"),
-                    height=300,
-                    top=0,
-                    left=0,
-                    gradient=ft.LinearGradient(
-                        begin=ft.Alignment.TOP_CENTER,
-                        end=ft.Alignment.BOTTOM_CENTER,
-                        colors=["#00000000", "#000000CC"],
-                    ),
-                ),
-            ]
+            header_content = []
 
             if logo_path.exists():
-                stack_children.append(
-                    ft.Container(
-                        content=ft.Image(
-                            src=str(logo_path),
-                            width=400,
-                            fit=ft.BoxFit.CONTAIN,
-                        ),
-                        bottom=40,
-                        left=40,
-                    )
+                logo_widget = ft.Image(
+                    src=str(logo_path),
+                    width=400,
+                    fit=ft.BoxFit.CONTAIN,
                 )
             else:
-                stack_children.append(
-                    ft.Container(
-                        content=ft.Text(
-                            self.console_meta.name,
-                            size=48,
-                            weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.WHITE,
-                        ),
-                        bottom=40,
-                        left=40,
-                    )
+                logo_widget = ft.Text(
+                    self.console_meta.name,
+                    size=48,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.WHITE,
                 )
 
-            stack_children.append(
-                ft.Container(
-                    content=ft.Row(
-                        [
-                            ft.IconButton(
-                                icon=ft.Icons.INFO_OUTLINE,
-                                icon_color=ft.Colors.WHITE,
-                                on_click=lambda _: self._show_console_info(),
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.SETTINGS,
-                                icon_color=ft.Colors.WHITE,
-                                on_click=lambda _: self._show_console_config(),
-                                tooltip="console settings",
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.IMAGE_SEARCH,
-                                icon_color=ft.Colors.WHITE,
-                                on_click=lambda _: self._download_console_artwork(),
-                                tooltip="download console artwork",
-                            ),
-                        ]
+            action_buttons = ft.Row(
+                [
+                    ft.IconButton(
+                        icon=ft.Icons.INFO_OUTLINE,
+                        icon_color=ft.Colors.WHITE,
+                        on_click=lambda _: self._show_console_info(),
                     ),
-                    top=20,
-                    right=20,
-                )
+                    ft.IconButton(
+                        icon=ft.Icons.SETTINGS,
+                        icon_color=ft.Colors.WHITE,
+                        on_click=lambda _: self._show_console_config(),
+                        tooltip="console settings",
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.IMAGE_SEARCH,
+                        icon_color=ft.Colors.WHITE,
+                        on_click=lambda _: self._download_console_artwork(),
+                        tooltip="download console artwork",
+                    ),
+                ]
             )
 
-            return ft.Stack(stack_children, width=float("inf"), height=300)
+            return ft.Container(
+                content=ft.Stack(
+                    [
+                        ft.Image(
+                            src=str(hero_path),
+                            width=float("inf"),
+                            height=300,
+                            fit=ft.BoxFit.COVER,
+                        ),
+                        ft.Container(
+                            width=float("inf"),
+                            height=300,
+                            gradient=ft.LinearGradient(
+                                begin=ft.Alignment.TOP_CENTER,
+                                end=ft.Alignment.BOTTOM_CENTER,
+                                colors=["#00000000", "#000000CC"],
+                            ),
+                        ),
+                        ft.Container(
+                            content=ft.Column(
+                                [
+                                    ft.Container(
+                                        content=action_buttons,
+                                        alignment=ft.Alignment.TOP_RIGHT,
+                                    ),
+                                    ft.Container(expand=True),
+                                    logo_widget,
+                                ],
+                                spacing=0,
+                            ),
+                            padding=40,
+                            width=float("inf"),
+                            height=300,
+                        ),
+                    ],
+                    width=float("inf"),
+                    height=300,
+                ),
+                width=float("inf"),
+                height=300,
+            )
 
         if logo_path.exists():
             return ft.Container(

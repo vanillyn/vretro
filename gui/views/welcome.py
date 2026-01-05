@@ -54,14 +54,16 @@ class WelcomeView:
     def _populate_consoles(self) -> None:
         self.console_grid.controls.clear()
 
-        if not self.app.library.consoles:
-            self.app.library.scan_consoles(verbose=False)
+        if not self.app.library.consoles or not self.app.library.games:
+            self.app.library.scan(verbose=False)
 
         consoles = sorted(self.app.library.get_consoles())
 
         for console_code in consoles:
             console_meta = self.app.library.get_console_metadata(console_code)
-            games = self.app.library.filter_by_console(console_code)
+            games = [
+                g for g in self.app.library.games if g.metadata.console == console_code
+            ]
             name = console_meta.name if console_meta else console_code
 
             icon_widget = self._get_console_icon(console_meta)
@@ -82,7 +84,7 @@ class WelcomeView:
                                         overflow=ft.TextOverflow.ELLIPSIS,
                                     ),
                                     ft.Text(
-                                        f"{len(games)} games",
+                                        f"{len(games)} {'game' if len(games) == 1 else 'games'}",
                                         size=12,
                                         color=ft.Colors.ON_SURFACE_VARIANT,
                                         text_align=ft.TextAlign.CENTER,

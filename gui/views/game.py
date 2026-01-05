@@ -42,57 +42,52 @@ class GameView:
 
     def _create_hero(self, hero_path, logo_path) -> ft.Container:
         if hero_path.exists():
-            stack_children = [
-                ft.Container(
-                    content=ft.Image(
-                        src=str(hero_path),
-                        fit=ft.BoxFit.COVER,
-                    ),
-                    width=float("inf"),
-                    height=400,
-                    top=0,
-                    left=0,
-                ),
-                ft.Container(
-                    width=float("inf"),
-                    height=400,
-                    top=0,
-                    left=0,
-                    gradient=ft.LinearGradient(
-                        begin=ft.Alignment.TOP_CENTER,
-                        end=ft.Alignment.BOTTOM_CENTER,
-                        colors=["#00000000", "#000000CC"],
-                    ),
-                ),
-            ]
-
             if logo_path.exists():
-                stack_children.append(
-                    ft.Container(
-                        content=ft.Image(
-                            src=str(logo_path),
-                            width=400,
-                            fit=ft.BoxFit.CONTAIN,
-                        ),
-                        bottom=40,
-                        left=40,
-                    )
+                logo_widget = ft.Image(
+                    src=str(logo_path),
+                    width=400,
+                    fit=ft.BoxFit.CONTAIN,
                 )
             else:
-                stack_children.append(
-                    ft.Container(
-                        content=ft.Text(
-                            self.game.metadata.get_title(),
-                            size=48,
-                            weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.WHITE,
-                        ),
-                        bottom=40,
-                        left=40,
-                    )
+                logo_widget = ft.Text(
+                    self.game.metadata.get_title(),
+                    size=48,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.WHITE,
                 )
 
-            return ft.Stack(stack_children, width=float("inf"), height=400)
+            return ft.Container(
+                content=ft.Stack(
+                    [
+                        ft.Image(
+                            src=str(hero_path),
+                            width=float("inf"),
+                            height=400,
+                            fit=ft.BoxFit.COVER,
+                        ),
+                        ft.Container(
+                            width=float("inf"),
+                            height=400,
+                            gradient=ft.LinearGradient(
+                                begin=ft.Alignment.TOP_CENTER,
+                                end=ft.Alignment.BOTTOM_CENTER,
+                                colors=["#00000000", "#000000CC"],
+                            ),
+                        ),
+                        ft.Container(
+                            content=logo_widget,
+                            padding=40,
+                            alignment=ft.Alignment.BOTTOM_LEFT,
+                            width=float("inf"),
+                            height=400,
+                        ),
+                    ],
+                    width=float("inf"),
+                    height=400,
+                ),
+                width=float("inf"),
+                height=400,
+            )
 
         if logo_path.exists():
             return ft.Container(
@@ -114,11 +109,18 @@ class GameView:
         )
 
     def _create_launch_section(self) -> ft.Container:
-        hours = getattr(self.game.metadata, "playtime", 0) // 3600
-        minutes = (getattr(self.game.metadata, "playtime", 0) % 3600) // 60
-        playtime_str = (
-            f"{hours}h {minutes}m" if hours > 0 or minutes > 0 else "not played yet"
-        )
+        playtime_seconds = getattr(self.game.metadata, "playtime", 0)
+
+        if playtime_seconds == 0:
+            playtime_str = "never played"
+        else:
+            hours = playtime_seconds // 3600
+            minutes = (playtime_seconds % 3600) // 60
+
+            if hours > 0:
+                playtime_str = f"{hours}h {minutes}m played"
+            else:
+                playtime_str = f"{minutes}m played"
 
         options_menu = ft.PopupMenuButton(
             icon=ft.Icons.ARROW_DROP_DOWN,
@@ -137,6 +139,12 @@ class GameView:
                     "open game files",
                     icon=ft.Icons.FOLDER_OPEN,
                     on_click=lambda _: self._open_files(),
+                ),
+                ft.PopupMenuItem(),
+                ft.PopupMenuItem(
+                    "search on igdb",
+                    icon=ft.Icons.DATASET,
+                    on_click=lambda _: self._search_igdb(),
                 ),
                 ft.PopupMenuItem(),
                 ft.PopupMenuItem(
@@ -172,7 +180,7 @@ class GameView:
                     ),
                     ft.Container(expand=True),
                     ft.Text(
-                        f"played for {playtime_str}",
+                        playtime_str,
                         size=16,
                         color=ft.Colors.ON_SURFACE_VARIANT,
                     ),
@@ -333,6 +341,25 @@ class GameView:
             subprocess.Popen(["xdg-open", str(self.game.resources_path)])
         else:
             self._show_info("not found", "resources directory not found")
+
+    def _search_igdb(self) -> None:
+        """Search IGDB for this game and update metadata"""
+        if not self.app.config.igdb_client_id or not self.app.config.igdb_client_secret:
+            self._show_error(
+                "igdb not configured",
+                "igdb api credentials not configured.\n\nadd them in settings.",
+            )
+            return
+
+        from ..elements.dialogs import IGDBSearchDialog
+
+        dialog = IGDBSearchDialog(
+            self.app.page,
+            self.game,
+            self.app.db,
+            lambda: self.app.show_game(self.game),
+        )
+        self.app.page.show_dialog(dialog.create())
 
     def _download_artwork(self) -> None:
         if not self.app.steamgrid.api_key:

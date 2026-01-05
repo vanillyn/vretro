@@ -5,6 +5,7 @@ from .dialogs import (
     ConsoleInfoDialog,
     EditMetadataDialog,
     FirstTimeSetupDialog,
+    IGDBSearchDialog,
     InstallConsoleDialog,
     InstallGameDialog,
     SettingsDialog,
@@ -21,5 +22,6 @@ __all__ = [
     "ConsoleArtworkDialog",
     "ConsoleConfigDialog",
     "ConsoleInfoDialog",
+    "IGDBSearchDialog",
     "Sidebar",
 ]

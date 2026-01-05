@@ -668,7 +668,7 @@ class InstallGameDialog:
         )
 
         self.game_list = ft.ListView(expand=True, spacing=5)
-        self.progress_bar = ft.ProgressRing(visible=False)
+        self.progress_bar = ft.ProgressBar(visible=False, value=0)
         self.progress_text = ft.Text("", visible=False)
 
         return ft.AlertDialog(
@@ -717,94 +717,127 @@ class InstallGameDialog:
 
         self.page.update()
 
+    def _update_progress(self, text: str, value: float = None):
+        """Update progress bar and text"""
+        self.progress_text.value = text
+        if value is not None:
+            self.progress_bar.value = value
+        self.page.update()
+
     def _install(self, game_name: str, source) -> None:
         self.game_list.controls.clear()
         self.progress_bar.visible = True
         self.progress_text.visible = True
-        self.progress_text.value = "downloading game..."
-        self.page.update()
+        self._update_progress("preparing...", 0)
 
         def download_thread():
-            console_code_upper = self.console.upper()
-            console_meta = self.library.get_console_metadata(console_code_upper)
+            try:
+                console_code_upper = self.console.upper()
+                console_meta = self.library.get_console_metadata(console_code_upper)
 
-            if not console_meta:
-                self._show_error(
-                    "error", f"console not installed: {console_code_upper}"
-                )
-                return
-
-            console_dir = self.library.console_root / console_meta.name
-            games_dir = console_dir / "games"
-
-            game_slug = re.sub(r"[^\w\s-]", "", game_name.lower())
-            game_slug = re.sub(r"[-\s]+", "-", game_slug).strip("-")
-
-            game_dir = games_dir / game_slug
-            game_dir.mkdir(parents=True, exist_ok=True)
-            (game_dir / "resources").mkdir(exist_ok=True)
-            (game_dir / "saves").mkdir(exist_ok=True)
-            (game_dir / "graphics").mkdir(exist_ok=True)
-
-            download_dir = game_dir / "resources"
-            extension = CONSOLE_EXTENSIONS.get(console_code_upper, "bin")
-            dest_file = download_dir / f"base.{extension}"
-
-            success = self.sources.download_file(source, dest_file, game_name)
-
-            if success:
-                self.progress_text.value = "fetching metadata..."
-                self.page.update()
-
-                igdb_games = self.db.search_games(game_name, self.console)
-                if igdb_games:
-                    igdb_game = igdb_games[0]
-                    metadata = GameMetadata(
-                        code=f"{self.console.lower()}-{game_slug}",
-                        console=console_code_upper,
-                        id=igdb_game.id,
-                        title={"NA": igdb_game.name},
-                        publisher={"NA": igdb_game.publisher or "unknown"},
-                        year=igdb_game.year or 0,
-                        region="NA",
+                if not console_meta:
+                    self._show_error(
+                        "error", f"console not installed: {console_code_upper}"
                     )
-                    metadata.save(game_dir / "metadata.json")
+                    return
+
+                console_dir = self.library.console_root / console_meta.name
+                games_dir = console_dir / "games"
+
+                import re
+
+                game_slug = re.sub(r"[^\w\s-]", "", game_name.lower())
+                game_slug = re.sub(r"[-\s]+", "-", game_slug).strip("-")
+
+                game_dir = games_dir / game_slug
+                game_dir.mkdir(parents=True, exist_ok=True)
+                (game_dir / "resources").mkdir(exist_ok=True)
+                (game_dir / "saves").mkdir(exist_ok=True)
+                (game_dir / "graphics").mkdir(exist_ok=True)
+
+                download_dir = game_dir / "resources"
+                from src.data.library import CONSOLE_EXTENSIONS
+
+                extension = CONSOLE_EXTENSIONS.get(console_code_upper, "bin")
+                dest_file = download_dir / f"base.{extension}"
+
+                self._update_progress("downloading game...", 0.2)
+
+                success = self.sources.download_file(source, dest_file, game_name)
+
+                if not success:
+                    self._show_error("error", "download failed")
+                    return
+
+                self._update_progress("creating metadata...", 0.5)
+
+                from src.data.library import GameMetadata
+
+                metadata = GameMetadata(
+                    code=f"{console_code_upper.lower()}-{game_slug}",
+                    console=console_code_upper,
+                    id=0,
+                    title={"NA": game_name},
+                    publisher={"NA": "unknown"},
+                    year=0,
+                    region="NA",
+                )
+
+                try:
+                    self._update_progress("fetching igdb metadata...", 0.6)
+                    igdb_games = self.db.search_games(game_name, self.console)
+                    if igdb_games:
+                        igdb_game = igdb_games[0]
+                        metadata.id = igdb_game.id
+                        metadata.title = {"NA": igdb_game.name}
+                        metadata.publisher = {"NA": igdb_game.publisher or "unknown"}
+                        metadata.year = igdb_game.year or 0
+                except Exception:
+                    pass
+
+                metadata.save(game_dir / "metadata.json")
 
                 if self.steamgrid and self.steamgrid.api_key:
-                    self.progress_text.value = "downloading artwork..."
-                    self.page.update()
+                    try:
+                        self._update_progress("downloading artwork...", 0.8)
 
-                    graphics_dir = game_dir / "graphics"
-                    graphics_dir.mkdir(parents=True, exist_ok=True)
+                        graphics_dir = game_dir / "graphics"
+                        graphics_dir.mkdir(parents=True, exist_ok=True)
 
-                    games = self.steamgrid.search_game(game_name)
-                    if games and len(games) > 0:
-                        game_id = games[0].get("id")
+                        games = self.steamgrid.search_game(game_name)
+                        if games and len(games) > 0:
+                            game_id = games[0].get("id")
 
-                        for asset_type, file_name in [
-                            ("grids", "grid"),
-                            ("heroes", "hero"),
-                            ("logos", "logo"),
-                            ("icons", "icon"),
-                        ]:
-                            assets = self.steamgrid.get_assets(game_id, asset_type)
-                            if assets and len(assets) > 0:
-                                url = assets[0].get("url")
-                                if url:
-                                    dest = graphics_dir / f"{file_name}.png"
-                                    self.steamgrid.download_asset(url, dest)
+                            for asset_type, file_name in [
+                                ("grids", "grid"),
+                                ("heroes", "hero"),
+                                ("logos", "logo"),
+                                ("icons", "icon"),
+                            ]:
+                                assets = self.steamgrid.get_assets(game_id, asset_type)
+                                if assets and len(assets) > 0:
+                                    url = assets[0].get("url")
+                                    if url:
+                                        dest = graphics_dir / f"{file_name}.png"
+                                        self.steamgrid.download_asset(url, dest)
+                    except Exception:
+                        pass
 
+                self._update_progress("complete!", 1.0)
                 self.progress_bar.visible = False
                 self.progress_text.visible = False
                 self.page.pop_dialog()
-                self._show_info("success", f"downloaded {game_name}")
+                self._show_info("success", f"installed {game_name}")
                 self.on_install()
-            else:
+
+            except Exception as e:
                 self.progress_bar.visible = False
                 self.progress_text.visible = False
-                self._show_error("error", "download failed")
+                self._show_error("error", f"installation failed: {str(e)}")
 
             self.page.update()
+
+        import threading
 
         threading.Thread(target=download_thread, daemon=True).start()
 
@@ -1060,46 +1093,50 @@ class ConsoleInfoDialog:
 
         hero_content = []
         if hero_path.exists():
-            hero_stack = ft.Stack(
-                [
-                    ft.Container(
-                        content=ft.Image(
+            logo_widget = (
+                ft.Image(
+                    src=str(logo_path),
+                    width=300,
+                    fit=ft.BoxFit.CONTAIN,
+                )
+                if logo_path.exists()
+                else ft.Text(
+                    self.console_meta.name,
+                    size=32,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.WHITE,
+                )
+            )
+
+            hero_stack = ft.Container(
+                content=ft.Stack(
+                    [
+                        ft.Image(
                             src=str(hero_path),
+                            width=600,
+                            height=300,
                             fit=ft.BoxFit.COVER,
                         ),
-                        width=600,
-                        height=300,
-                        top=0,
-                        left=0,
-                    ),
-                    ft.Container(
-                        width=600,
-                        height=300,
-                        top=0,
-                        left=0,
-                        gradient=ft.LinearGradient(
-                            begin=ft.Alignment.TOP_CENTER,
-                            end=ft.Alignment.BOTTOM_CENTER,
-                            colors=["#00000000", "#000000CC"],
+                        ft.Container(
+                            width=600,
+                            height=300,
+                            gradient=ft.LinearGradient(
+                                begin=ft.Alignment.TOP_CENTER,
+                                end=ft.Alignment.BOTTOM_CENTER,
+                                colors=["#00000000", "#000000CC"],
+                            ),
                         ),
-                    ),
-                    ft.Container(
-                        content=ft.Image(
-                            src=str(logo_path),
-                            width=300,
-                            fit=ft.BoxFit.CONTAIN,
-                        )
-                        if logo_path.exists()
-                        else ft.Text(
-                            self.console_meta.name,
-                            size=32,
-                            weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.WHITE,
+                        ft.Container(
+                            content=logo_widget,
+                            alignment=ft.Alignment.BOTTOM_LEFT,
+                            padding=20,
+                            width=600,
+                            height=300,
                         ),
-                        bottom=20,
-                        left=20,
-                    ),
-                ],
+                    ],
+                    width=600,
+                    height=300,
+                ),
                 width=600,
                 height=300,
             )
@@ -1131,3 +1168,106 @@ class ConsoleInfoDialog:
                 ft.TextButton("close", on_click=lambda _: self.page.pop_dialog()),
             ],
         )
+
+
+class IGDBSearchDialog:
+    def __init__(self, page: ft.Page, game, db, on_update: Callable) -> None:
+        self.page = page
+        self.game = game
+        self.db = db
+        self.on_update = on_update
+
+    def create(self) -> ft.AlertDialog:
+        self.search_input = ft.TextField(
+            label="search igdb",
+            value=self.game.metadata.get_title(),
+        )
+
+        self.results_list = ft.ListView(expand=True, spacing=5)
+        self.progress_bar = ft.ProgressRing(visible=False)
+
+        return ft.AlertDialog(
+            title=ft.Text("search igdb"),
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                self.search_input,
+                                ft.IconButton(
+                                    icon=ft.Icons.SEARCH,
+                                    on_click=self._on_search,
+                                ),
+                            ]
+                        ),
+                        self.progress_bar,
+                        self.results_list,
+                    ]
+                ),
+                width=600,
+                height=500,
+            ),
+            actions=[
+                ft.TextButton("cancel", on_click=lambda _: self.page.pop_dialog()),
+            ],
+        )
+
+    def _on_search(self, e) -> None:
+        self.results_list.controls.clear()
+        self.progress_bar.visible = True
+        query = self.search_input.value
+        self.page.update()
+
+        if not query:
+            self.progress_bar.visible = False
+            self.page.update()
+            return
+
+        try:
+            games = self.db.search_games(query, self.game.metadata.console)
+
+            self.progress_bar.visible = False
+
+            if not games:
+                self.results_list.controls.append(
+                    ft.Text("no results found", color=ft.Colors.ON_SURFACE_VARIANT)
+                )
+            else:
+                for igdb_game in games[:20]:
+                    btn = ft.ListTile(
+                        title=ft.Text(igdb_game.name),
+                        subtitle=ft.Text(
+                            f"{igdb_game.platform} • {igdb_game.year or '?'} • {igdb_game.publisher or 'Unknown'}"
+                        ),
+                        on_click=lambda _, g=igdb_game: self._select_game(g),
+                    )
+                    self.results_list.controls.append(btn)
+
+            self.page.update()
+
+        except Exception as ex:
+            self.progress_bar.visible = False
+            self.results_list.controls.append(
+                ft.Text(f"error: {str(ex)}", color=ft.Colors.ERROR)
+            )
+            self.page.update()
+
+    def _select_game(self, igdb_game) -> None:
+        self.game.metadata.id = igdb_game.id
+        self.game.metadata.title = {"NA": igdb_game.name}
+        self.game.metadata.publisher = {"NA": igdb_game.publisher or "unknown"}
+        self.game.metadata.year = igdb_game.year or 0
+
+        self.game.metadata.save(self.game.path / "metadata.json")
+
+        self.page.pop_dialog()
+        self._show_info("success", f"updated metadata to: {igdb_game.name}")
+        self.on_update()
+
+    def _show_info(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog())],
+        )
+        self.page.show_dialog(dialog)
