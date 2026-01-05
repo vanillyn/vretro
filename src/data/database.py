@@ -174,21 +174,16 @@ class OnlineDatabase:
             if not token:
                 return None
 
-            if not self._igdb_wrapper:
-                self._igdb_wrapper = IGDBWrapper(self.config.igdb_client_id, token)
-
+            self._igdb_wrapper = IGDBWrapper(self.config.igdb_client_id, token)
             return self._igdb_wrapper
         except ImportError:
+            return None
+        except Exception:
             return None
 
     def search_games(
         self, query: str, platform: Optional[str] = None
     ) -> List[OnlineGame]:
-        cache_key = f"search_{query}_{platform or 'all'}"
-        cached = self.cache.get(cache_key)
-        if cached:
-            return [OnlineGame(**g) for g in cached]
-
         wrapper = self._get_igdb_wrapper()
         if not wrapper:
             return []
@@ -197,49 +192,77 @@ class OnlineDatabase:
         if platform:
             platform_id = PLATFORM_MAPPING.get(platform.upper())
             if platform_id:
-                platform_filter = f"& platforms = {platform_id}"
+                platform_filter = f"& platforms = ({platform_id})"
+
+        query_escaped = query.replace('"', '\\"')
 
         query_body = f"""
-        fields name, first_release_date, involved_companies.company.name,
-               platforms.name, cover.url;
-        search "{query}";
-        where category = 0 {platform_filter};
-        limit 50;
-        """
+fields name, first_release_date, involved_companies.company.name, platforms.name, cover.url;
+search "{query_escaped}";
+where category = 0 {platform_filter};
+limit 50;
+"""
 
         try:
             byte_array = wrapper.api_request("games", query_body.strip())
 
-            data = json.loads(byte_array)
+            if not byte_array:
+                return []
+
+            data = json.loads(byte_array.decode("utf-8"))
+
+            if not isinstance(data, list):
+                return []
+
             results = []
 
             for game in data:
+                if not isinstance(game, dict):
+                    continue
+
                 year = None
                 if game.get("first_release_date"):
-                    year = time.gmtime(game["first_release_date"]).tm_year
+                    try:
+                        year = time.gmtime(game["first_release_date"]).tm_year
+                    except:
+                        pass
 
                 publisher = None
                 if game.get("involved_companies"):
                     companies = game["involved_companies"]
-                    if companies and companies[0].get("company"):
-                        publisher = companies[0]["company"].get("name")
+                    if companies and isinstance(companies, list) and len(companies) > 0:
+                        if isinstance(companies[0], dict) and companies[0].get(
+                            "company"
+                        ):
+                            company_data = companies[0]["company"]
+                            if isinstance(company_data, dict):
+                                publisher = company_data.get("name")
 
                 platform_name = platform or "Unknown"
                 if game.get("platforms"):
-                    platform_name = game["platforms"][0].get("name", platform_name)
+                    platforms_list = game["platforms"]
+                    if (
+                        platforms_list
+                        and isinstance(platforms_list, list)
+                        and len(platforms_list) > 0
+                    ):
+                        if isinstance(platforms_list[0], dict):
+                            platform_name = platforms_list[0].get("name", platform_name)
 
                 cover_url = None
                 if game.get("cover"):
-                    cover_url = (
-                        game["cover"].get("url", "").replace("t_thumb", "t_cover_big")
-                    )
-                    if cover_url and not cover_url.startswith("http"):
-                        cover_url = f"https:{cover_url}"
+                    cover_data = game["cover"]
+                    if isinstance(cover_data, dict):
+                        cover_url = cover_data.get("url", "")
+                        if cover_url:
+                            cover_url = cover_url.replace("t_thumb", "t_cover_big")
+                            if not cover_url.startswith("http"):
+                                cover_url = f"https:{cover_url}"
 
                 results.append(
                     OnlineGame(
-                        id=game["id"],
-                        name=game["name"],
+                        id=game.get("id", 0),
+                        name=game.get("name", "Unknown"),
                         platform=platform_name,
                         year=year,
                         publisher=publisher,
@@ -247,10 +270,12 @@ class OnlineDatabase:
                     )
                 )
 
-            self.cache.set(cache_key, [g.to_json() for g in results])
             return results
 
-        except Exception:
+        except json.JSONDecodeError:
+            return []
+        except Exception as e:
+            print(f"IGDB search error: {e}")
             return []
 
     def get_emulator_info(self, emulator_key: str) -> Optional[OnlineEmulator]:

@@ -15,7 +15,7 @@ class GameView:
         self.game = game
         self.show_details = False
 
-    def create(self) -> ft.Column:
+    def create(self) -> ft.Container:
         graphics_dir = self.game.path / "graphics"
         hero_path = graphics_dir / "hero.png"
         logo_path = graphics_dir / "logo.png"
@@ -29,32 +29,38 @@ class GameView:
         launch_section = self._create_launch_section()
         details_section = self._create_details_section()
 
-        return ft.Column(
-            [
-                hero_section,
-                launch_section,
-                details_section,
-            ],
-            scroll=ft.ScrollMode.AUTO,
+        return ft.Container(
+            content=ft.Column(
+                [
+                    hero_section,
+                    ft.Column(
+                        [
+                            launch_section,
+                            details_section,
+                        ],
+                        scroll=ft.ScrollMode.AUTO,
+                        expand=True,
+                        spacing=20,
+                    ),
+                ],
+                spacing=0,
+                tight=True,
+            ),
             expand=True,
-            spacing=0,
-            tight=True,
+            padding=0,
         )
 
-    def _create_hero(self, hero_path, logo_path) -> ft.Container:
-        if hero_path.exists():
+    def _create_hero(self, hero_path, logo_path) -> ft.Control:
+        if hero_path and hero_path.exists():
             if logo_path.exists():
-                logo_widget = ft.Container(
-                    content=ft.Image(
-                        src=str(logo_path),
-                        fit=ft.BoxFit.CONTAIN,
-                    ),
+                logo_widget = ft.Image(
+                    src=str(logo_path),
                     width=400,
-                    height=200,
+                    fit=ft.BoxFit.CONTAIN,
                 )
             else:
                 logo_widget = ft.Text(
-                    self.game.metadata.get_title(),
+                    self.game.metadata.name,
                     size=48,
                     weight=ft.FontWeight.BOLD,
                     color=ft.Colors.WHITE,
@@ -66,12 +72,12 @@ class GameView:
                         ft.Image(
                             src=str(hero_path),
                             width=float("inf"),
-                            height=400,
+                            height=300,
                             fit=ft.BoxFit.COVER,
                         ),
                         ft.Container(
                             width=float("inf"),
-                            height=400,
+                            height=300,
                             gradient=ft.LinearGradient(
                                 begin=ft.Alignment.TOP_CENTER,
                                 end=ft.Alignment.BOTTOM_CENTER,
@@ -79,35 +85,50 @@ class GameView:
                             ),
                         ),
                         ft.Container(
-                            content=logo_widget,
+                            content=ft.Column(
+                                [
+                                    ft.Container(expand=True),
+                                    logo_widget,
+                                ],
+                                spacing=0,
+                            ),
                             padding=40,
-                            alignment=ft.Alignment.BOTTOM_LEFT,
                             width=float("inf"),
-                            height=400,
+                            height=300,
                         ),
                     ],
                     width=float("inf"),
-                    height=400,
+                    height=300,
                 ),
                 width=float("inf"),
-                height=400,
+                height=300,
             )
 
         if logo_path.exists():
             return ft.Container(
-                content=ft.Image(
-                    src=str(logo_path),
-                    width=400,
-                    fit=ft.BoxFit.CONTAIN,
+                content=ft.Row(
+                    [
+                        ft.Image(
+                            src=str(logo_path),
+                            width=400,
+                            fit=ft.BoxFit.CONTAIN,
+                        ),
+                        ft.Container(expand=True),
+                    ]
                 ),
                 padding=40,
             )
 
         return ft.Container(
-            content=ft.Text(
-                self.game.metadata.get_title(),
-                size=48,
-                weight=ft.FontWeight.BOLD,
+            content=ft.Row(
+                [
+                    ft.Text(
+                        self.game.metadata.name,
+                        size=48,
+                        weight=ft.FontWeight.BOLD,
+                    ),
+                    ft.Container(expand=True),
+                ]
             ),
             padding=40,
         )
