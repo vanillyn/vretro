@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os
 import platform
-from calendar import c
 from pathlib import Path
 from typing import List, Tuple
 
@@ -421,7 +420,7 @@ def cli(
             games = sources.search_games(console_code_upper, game_name)
 
             if not games:
-                term.print(f"[yellow]no games found[/yellow]")
+                term.print("[yellow]no games found[/yellow]")
                 return
 
             if len(games) > 1:

@@ -2,7 +2,7 @@ import re
 import sys
 import threading
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 import flet as ft
 
@@ -565,7 +565,10 @@ class InstallConsoleDialog:
 
         for code, name in self.all_consoles:
             if not query or query_lower in code.lower() or query_lower in name.lower():
+                icon_widget = ft.Icon(ft.Icons.VIDEOGAME_ASSET)
+
                 btn = ft.ListTile(
+                    leading=icon_widget,
                     title=ft.Text(name),
                     subtitle=ft.Text(code),
                     on_click=lambda _, c=code: self._install(c),
@@ -589,11 +592,7 @@ class InstallConsoleDialog:
             console_dir = self.library.create_console(code.upper(), meta)
 
             def download_artwork():
-                if (
-                    hasattr(self, "steamgrid")
-                    and self.steamgrid
-                    and self.steamgrid.api_key
-                ):
+                if self.steamgrid and self.steamgrid.api_key:
                     graphics_dir = console_dir / "graphics"
                     graphics_dir.mkdir(parents=True, exist_ok=True)
 
@@ -612,8 +611,6 @@ class InstallConsoleDialog:
                                 if url:
                                     dest = graphics_dir / f"{file_name}.png"
                                     self.steamgrid.download_asset(url, dest)
-
-            import threading
 
             threading.Thread(target=download_artwork, daemon=True).start()
 
@@ -718,7 +715,6 @@ class InstallGameDialog:
         self.page.update()
 
     def _update_progress(self, text: str, value: float = None):
-        """Update progress bar and text"""
         self.progress_text.value = text
         if value is not None:
             self.progress_bar.value = value
@@ -744,8 +740,6 @@ class InstallGameDialog:
                 console_dir = self.library.console_root / console_meta.name
                 games_dir = console_dir / "games"
 
-                import re
-
                 game_slug = re.sub(r"[^\w\s-]", "", game_name.lower())
                 game_slug = re.sub(r"[-\s]+", "-", game_slug).strip("-")
 
@@ -756,8 +750,6 @@ class InstallGameDialog:
                 (game_dir / "graphics").mkdir(exist_ok=True)
 
                 download_dir = game_dir / "resources"
-                from src.data.library import CONSOLE_EXTENSIONS
-
                 extension = CONSOLE_EXTENSIONS.get(console_code_upper, "bin")
                 dest_file = download_dir / f"base.{extension}"
 
@@ -770,8 +762,6 @@ class InstallGameDialog:
                     return
 
                 self._update_progress("creating metadata...", 0.5)
-
-                from src.data.library import GameMetadata
 
                 metadata = GameMetadata(
                     code=f"{console_code_upper.lower()}-{game_slug}",
@@ -836,8 +826,6 @@ class InstallGameDialog:
                 self._show_error("error", f"installation failed: {str(e)}")
 
             self.page.update()
-
-        import threading
 
         threading.Thread(target=download_thread, daemon=True).start()
 
@@ -1224,7 +1212,7 @@ class IGDBSearchDialog:
             return
 
         try:
-            games = self.db.search_games(query, self.game.metadata.console)
+            games = self.db.search_games(query)
 
             self.progress_bar.visible = False
 
@@ -1237,7 +1225,7 @@ class IGDBSearchDialog:
                     btn = ft.ListTile(
                         title=ft.Text(igdb_game.name),
                         subtitle=ft.Text(
-                            f"{igdb_game.platform} • {igdb_game.year or '?'} • {igdb_game.publisher or 'Unknown'}"
+                            f"{igdb_game.platform} • {igdb_game.year or '?'} • {igdb_game.publisher or 'unknown'}"
                         ),
                         on_click=lambda _, g=igdb_game: self._select_game(g),
                     )

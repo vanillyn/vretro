@@ -104,8 +104,8 @@ class OnlineDatabase:
     def __init__(self, config: Optional[VRetroConfig] = None):
         self.cache = DatabaseCache()
         self.github_api = "https://api.github.com"
-        self.igdb_api = "https://api.igdb.com/v4"
         self.config = config or VRetroConfig.load()
+        self._igdb_wrapper = None
         self._igdb_token = None
         self._token_expiry = 0
         self._emulator_database = self._load_emulator_database()
@@ -166,6 +166,21 @@ class OnlineDatabase:
 
         return None
 
+    def _get_igdb_wrapper(self):
+        try:
+            from igdb.wrapper import IGDBWrapper
+
+            token = self._get_igdb_token()
+            if not token:
+                return None
+
+            if not self._igdb_wrapper:
+                self._igdb_wrapper = IGDBWrapper(self.config.igdb_client_id, token)
+
+            return self._igdb_wrapper
+        except ImportError:
+            return None
+
     def search_games(
         self, query: str, platform: Optional[str] = None
     ) -> List[OnlineGame]:
@@ -174,14 +189,9 @@ class OnlineDatabase:
         if cached:
             return [OnlineGame(**g) for g in cached]
 
-        token = self._get_igdb_token()
-        if not token:
+        wrapper = self._get_igdb_wrapper()
+        if not wrapper:
             return []
-
-        headers = {
-            "Client-ID": self.config.igdb_client_id,
-            "Authorization": f"Bearer {token}",
-        }
 
         platform_filter = ""
         if platform:
@@ -189,7 +199,7 @@ class OnlineDatabase:
             if platform_id:
                 platform_filter = f"& platforms = {platform_id}"
 
-        body = f"""
+        query_body = f"""
         fields name, first_release_date, involved_companies.company.name,
                platforms.name, cover.url;
         search "{query}";
@@ -198,14 +208,9 @@ class OnlineDatabase:
         """
 
         try:
-            response = requests.post(
-                f"{self.igdb_api}/games", headers=headers, data=body.strip(), timeout=10
-            )
+            byte_array = wrapper.api_request("games", query_body.strip())
 
-            if response.status_code != 200:
-                return []
-
-            data = response.json()
+            data = json.loads(byte_array)
             results = []
 
             for game in data:

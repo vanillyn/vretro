@@ -13,6 +13,8 @@ class Sidebar:
         self.container: ft.Container = None
         self.title_text: ft.Text = None
         self.list_view: ft.ListView = None
+        self.collapsed = False
+        self.content_column: ft.Column = None
 
     def create(self) -> ft.Container:
         self.title_text = ft.Text(
@@ -26,49 +28,85 @@ class Sidebar:
             expand=True,
         )
 
+        self.content_column = ft.Column(
+            [
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Text("vretro", size=24, weight=ft.FontWeight.BOLD),
+                            ft.Container(expand=True),
+                            ft.IconButton(
+                                icon=ft.Icons.REFRESH,
+                                on_click=lambda _: self._refresh_library(),
+                                tooltip="refresh library",
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.SETTINGS,
+                                on_click=lambda _: self.app.show_settings(),
+                                tooltip="settings",
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                    padding=20,
+                ),
+                ft.Divider(height=1),
+                ft.Container(
+                    content=self.title_text,
+                    padding=ft.padding.only(left=20, right=20, top=20, bottom=10),
+                ),
+                ft.Container(
+                    content=self.list_view,
+                    expand=True,
+                    padding=ft.padding.only(left=10, right=10),
+                ),
+            ],
+            spacing=0,
+        )
+
         self.container = ft.Container(
             width=280,
             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            border_radius=ft.border_radius.only(top_right=20, bottom_right=20),
-            content=ft.Column(
+            content=ft.Stack(
                 [
+                    self.content_column,
                     ft.Container(
-                        content=ft.Row(
-                            [
-                                ft.Text("vretro", size=24, weight=ft.FontWeight.BOLD),
-                                ft.Container(expand=True),
-                                ft.IconButton(
-                                    icon=ft.Icons.REFRESH,
-                                    on_click=lambda _: self._refresh_library(),
-                                    tooltip="refresh library",
-                                ),
-                                ft.IconButton(
-                                    icon=ft.Icons.SETTINGS,
-                                    on_click=lambda _: self.app.show_settings(),
-                                    tooltip="settings",
-                                ),
-                            ],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        content=ft.IconButton(
+                            icon=ft.Icons.CHEVRON_LEFT,
+                            on_click=lambda _: self.toggle(),
+                            tooltip="collapse sidebar",
                         ),
-                        padding=20,
+                        right=0,
+                        top=10,
                     ),
-                    ft.Divider(height=1),
-                    ft.Container(
-                        content=self.title_text,
-                        padding=ft.padding.only(left=20, right=20, top=20, bottom=10),
-                    ),
-                    ft.Container(
-                        content=self.list_view,
-                        expand=True,
-                        padding=ft.padding.only(left=10, right=10),
-                    ),
-                ],
-                spacing=0,
+                ]
             ),
         )
 
         self.refresh()
         return self.container
+
+    def toggle(self) -> None:
+        self.collapsed = not self.collapsed
+
+        if self.collapsed:
+            self.container.width = 60
+            self.content_column.visible = False
+            icon_button = self.container.content.controls[1]
+            icon_button.content.icon = ft.Icons.CHEVRON_RIGHT
+            icon_button.content.tooltip = "expand sidebar"
+            icon_button.left = 10
+            icon_button.right = None
+        else:
+            self.container.width = 280
+            self.content_column.visible = True
+            icon_button = self.container.content.controls[1]
+            icon_button.content.icon = ft.Icons.CHEVRON_LEFT
+            icon_button.content.tooltip = "collapse sidebar"
+            icon_button.left = None
+            icon_button.right = 0
+
+        self.app.page.update()
 
     def _refresh_library(self) -> None:
         self.app.library.scan(verbose=False)

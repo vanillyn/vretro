@@ -38,15 +38,19 @@ class GameView:
             scroll=ft.ScrollMode.AUTO,
             expand=True,
             spacing=0,
+            tight=True,
         )
 
     def _create_hero(self, hero_path, logo_path) -> ft.Container:
         if hero_path.exists():
             if logo_path.exists():
-                logo_widget = ft.Image(
-                    src=str(logo_path),
+                logo_widget = ft.Container(
+                    content=ft.Image(
+                        src=str(logo_path),
+                        fit=ft.BoxFit.CONTAIN,
+                    ),
                     width=400,
-                    fit=ft.BoxFit.CONTAIN,
+                    height=200,
                 )
             else:
                 logo_widget = ft.Text(
@@ -343,7 +347,6 @@ class GameView:
             self._show_info("not found", "resources directory not found")
 
     def _search_igdb(self) -> None:
-        """Search IGDB for this game and update metadata"""
         if not self.app.config.igdb_client_id or not self.app.config.igdb_client_secret:
             self._show_error(
                 "igdb not configured",

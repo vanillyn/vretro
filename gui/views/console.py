@@ -62,8 +62,6 @@ class ConsoleView:
             hero_path = self._get_random_game_hero()
 
         if hero_path and hero_path.exists():
-            header_content = []
-
             if logo_path.exists():
                 logo_widget = ft.Image(
                     src=str(logo_path),
