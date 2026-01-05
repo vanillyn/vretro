@@ -41,6 +41,5 @@ venv/
 .DS_Store
 test.py
 
-# files related to another project, see vretro-gui
-gui.py
+# files from old versions
 flet_main.py
