@@ -43,11 +43,50 @@ def setup_library_path(emulator_dir: Path, binary_name: str):
         os.environ["LD_LIBRARY_PATH"] = ":".join(lib_dirs)
 
 
+def prepare_rom(game: GameEntry, verbose: bool = False) -> Optional[Path]:
+    from .compression import decompress_rom, is_compressed
+
+    resources_dir = game.path / "resources"
+    if not resources_dir.exists():
+        return None
+
+    base_files = list(resources_dir.glob("base.*"))
+    if not base_files:
+        return None
+
+    base_file = base_files[0]
+
+    if is_compressed(base_file):
+        if verbose:
+            term.print(f"[dim]decompressing {base_file.name}...[/dim]")
+
+        temp_dir = game.path / ".temp"
+        temp_dir.mkdir(exist_ok=True)
+
+        decompressed = decompress_rom(base_file, temp_dir)
+        if not decompressed:
+            term.print("[red]failed to decompress rom[/red]")
+            return None
+
+        return decompressed
+
+    return base_file
+
+
+def cleanup_temp(game: GameEntry):
+    temp_dir = game.path / ".temp"
+    if temp_dir.exists():
+        import shutil
+
+        shutil.rmtree(temp_dir)
+
+
 def build_launch_command(
     game: GameEntry,
     library: GameLibrary,
     emulator_binary: Path,
     binary_name: str,
+    rom_path: Path,
     use_fullscreen: bool,
     debug: bool = False,
 ) -> list[str]:
@@ -59,17 +98,19 @@ def build_launch_command(
 
     if "mupen64plus" in binary_name.lower():
         return _build_mupen64plus_command(
-            emulator_binary, emulator_dir, game, use_fullscreen, debug
+            emulator_binary, emulator_dir, game, rom_path, use_fullscreen, debug
         )
 
     elif "yuzu" in binary_name.lower() or "eden" in binary_name.lower():
-        return _build_yuzu_command(emulator_binary, emulator_dir, game, use_fullscreen)
+        return _build_yuzu_command(
+            emulator_binary, emulator_dir, game, rom_path, use_fullscreen
+        )
 
     else:
         return _build_generic_command(
             console_meta.emulator.launch_command,
             emulator_binary,
-            game.rom_path,
+            rom_path,
             use_fullscreen,
         )
 
@@ -78,6 +119,7 @@ def _build_mupen64plus_command(
     binary: Path,
     emulator_dir: Path,
     game: GameEntry,
+    rom_path: Path,
     fullscreen: bool,
     debug: bool,
 ) -> list[str]:
@@ -99,12 +141,16 @@ def _build_mupen64plus_command(
         if dlc_dir.exists():
             cmd.extend(["--plugindir", str(dlc_dir)])
 
-    cmd.append(str(game.rom_path))
+    cmd.append(str(rom_path))
     return cmd
 
 
 def _build_yuzu_command(
-    binary: Path, emulator_dir: Path, game: GameEntry, fullscreen: bool = True
+    binary: Path,
+    emulator_dir: Path,
+    game: GameEntry,
+    rom_path: Path,
+    fullscreen: bool = True,
 ) -> list[str]:
     portable_dir = emulator_dir.parent / "portable"
     portable_dir.mkdir(exist_ok=True)
@@ -136,7 +182,7 @@ def _build_yuzu_command(
     if fullscreen:
         cmd.append("-f")
 
-    cmd.extend(["-g", str(game.rom_path)])
+    cmd.extend(["-g", str(rom_path)])
 
     dlc_dir = game.resources_path / "dlc"
     updates_dir = game.resources_path / "updates"
@@ -198,14 +244,20 @@ def launch_game(
 
     setup_library_path(emulator_dir, binary_name)
 
+    rom_path = prepare_rom(game, verbose)
+    if not rom_path:
+        term.print("[red]rom file not found[/red]")
+        return False
+
     use_fullscreen = fullscreen if fullscreen is not None else config.fullscreen
 
     cmd = build_launch_command(
-        game, library, emulator_binary, binary_name, use_fullscreen, debug
+        game, library, emulator_binary, binary_name, rom_path, use_fullscreen, debug
     )
 
     if not cmd:
         term.print("[red]failed to build launch command[/red]")
+        cleanup_temp(game)
         return False
 
     if save_path:
@@ -247,10 +299,13 @@ def launch_game(
         if verbose:
             term.print(f"[dim]played for {elapsed // 60}m {elapsed % 60}s[/dim]")
 
+        cleanup_temp(game)
         return True
     except subprocess.CalledProcessError as e:
         term.print(f"[red]launch failed: {e}[/red]")
+        cleanup_temp(game)
         return False
     except FileNotFoundError:
         term.print(f"[red]emulator binary not found: {emulator_binary}[/red]")
+        cleanup_temp(game)
         return False

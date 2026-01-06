@@ -18,6 +18,8 @@ class OnlineGame:
     publisher: Optional[str]
     region: str = "NA"
     cover_url: Optional[str] = None
+    summary: Optional[str] = None
+    genres: List[str] = None
 
     def to_json(self) -> dict:
         return {
@@ -28,7 +30,22 @@ class OnlineGame:
             "publisher": self.publisher,
             "region": self.region,
             "cover_url": self.cover_url,
+            "summary": self.summary,
+            "genres": self.genres or [],
         }
+
+
+@dataclass
+class GameDetails:
+    id: int
+    name: str
+    summary: Optional[str]
+    storyline: Optional[str]
+    screenshots: List[str]
+    videos: List[Dict]
+    genres: List[str]
+    release_date: Optional[int]
+    rating: Optional[float]
 
 
 @dataclass
@@ -105,7 +122,7 @@ class OnlineDatabase:
         self.cache = DatabaseCache()
         self.github_api = "https://api.github.com"
         self.config = config or VRetroConfig.load()
-        self._igdb_wrapper = None
+        self.igdb_base = "https://api.igdb.com/v4"
         self._igdb_token = None
         self._token_expiry = 0
         self._emulator_database = self._load_emulator_database()
@@ -166,117 +183,160 @@ class OnlineDatabase:
 
         return None
 
-    def _get_igdb_wrapper(self):
+    def _igdb_request(self, endpoint: str, query: str) -> Optional[List]:
+        token = self._get_igdb_token()
+        if not token:
+            return None
+
         try:
-            from igdb.wrapper import IGDBWrapper
+            headers = {
+                "Client-ID": self.config.igdb_client_id,
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            }
 
-            token = self._get_igdb_token()
-            if not token:
-                return None
+            response = requests.post(
+                f"{self.igdb_base}/{endpoint}",
+                headers=headers,
+                data=query,
+                timeout=10,
+            )
 
-            self._igdb_wrapper = IGDBWrapper(self.config.igdb_client_id, token)
-            return self._igdb_wrapper
-        except ImportError:
-            return None
+            if response.status_code == 200:
+                return response.json()
         except Exception:
-            return None
+            pass
+
+        return None
 
     def search_games(
         self, query: str, platform: Optional[str] = None
     ) -> List[OnlineGame]:
-        wrapper = self._get_igdb_wrapper()
-        if not wrapper:
-            return []
-
         platform_filter = ""
         if platform:
             platform_id = PLATFORM_MAPPING.get(platform.upper())
             if platform_id:
-                platform_filter = f"& platforms = ({platform_id})"
+                platform_filter = f" & platforms = [{platform_id}]"
 
-        query_escaped = query.replace('"', '\\"')
+        igdb_query = f'fields name, first_release_date, involved_companies.company.name, platforms.name, cover.url, summary, genres.name; search "{query}"; where category = 0{platform_filter}; limit 50;'
 
-        query_body = f"""
-fields name, first_release_date, involved_companies.company.name, platforms.name, cover.url;
-search "{query_escaped}";
-where category = 0 {platform_filter};
-limit 50;
-"""
+        data = self._igdb_request("games", igdb_query)
+        if not data:
+            return []
 
-        try:
-            byte_array = wrapper.api_request("games", query_body.strip())
+        results = []
+        for game in data:
+            if not isinstance(game, dict):
+                continue
 
-            if not byte_array:
-                return []
+            year = None
+            if game.get("first_release_date"):
+                try:
+                    year = time.gmtime(game["first_release_date"]).tm_year
+                except:
+                    pass
 
-            data = json.loads(byte_array.decode("utf-8"))
+            publisher = None
+            if game.get("involved_companies"):
+                companies = game["involved_companies"]
+                if companies and isinstance(companies, list) and len(companies) > 0:
+                    if isinstance(companies[0], dict) and companies[0].get("company"):
+                        company_data = companies[0]["company"]
+                        if isinstance(company_data, dict):
+                            publisher = company_data.get("name")
 
-            if not isinstance(data, list):
-                return []
+            platform_name = platform or "Unknown"
+            if game.get("platforms"):
+                platforms_list = game["platforms"]
+                if (
+                    platforms_list
+                    and isinstance(platforms_list, list)
+                    and len(platforms_list) > 0
+                ):
+                    if isinstance(platforms_list[0], dict):
+                        platform_name = platforms_list[0].get("name", platform_name)
 
-            results = []
+            cover_url = None
+            if game.get("cover"):
+                cover_data = game["cover"]
+                if isinstance(cover_data, dict):
+                    cover_url = cover_data.get("url", "")
+                    if cover_url:
+                        cover_url = cover_url.replace("t_thumb", "t_cover_big")
+                        if not cover_url.startswith("http"):
+                            cover_url = f"https:{cover_url}"
 
-            for game in data:
-                if not isinstance(game, dict):
-                    continue
+            genres = []
+            if game.get("genres"):
+                for genre in game["genres"]:
+                    if isinstance(genre, dict) and genre.get("name"):
+                        genres.append(genre["name"])
 
-                year = None
-                if game.get("first_release_date"):
-                    try:
-                        year = time.gmtime(game["first_release_date"]).tm_year
-                    except:
-                        pass
+            summary = game.get("summary")
 
-                publisher = None
-                if game.get("involved_companies"):
-                    companies = game["involved_companies"]
-                    if companies and isinstance(companies, list) and len(companies) > 0:
-                        if isinstance(companies[0], dict) and companies[0].get(
-                            "company"
-                        ):
-                            company_data = companies[0]["company"]
-                            if isinstance(company_data, dict):
-                                publisher = company_data.get("name")
-
-                platform_name = platform or "Unknown"
-                if game.get("platforms"):
-                    platforms_list = game["platforms"]
-                    if (
-                        platforms_list
-                        and isinstance(platforms_list, list)
-                        and len(platforms_list) > 0
-                    ):
-                        if isinstance(platforms_list[0], dict):
-                            platform_name = platforms_list[0].get("name", platform_name)
-
-                cover_url = None
-                if game.get("cover"):
-                    cover_data = game["cover"]
-                    if isinstance(cover_data, dict):
-                        cover_url = cover_data.get("url", "")
-                        if cover_url:
-                            cover_url = cover_url.replace("t_thumb", "t_cover_big")
-                            if not cover_url.startswith("http"):
-                                cover_url = f"https:{cover_url}"
-
-                results.append(
-                    OnlineGame(
-                        id=game.get("id", 0),
-                        name=game.get("name", "Unknown"),
-                        platform=platform_name,
-                        year=year,
-                        publisher=publisher,
-                        cover_url=cover_url,
-                    )
+            results.append(
+                OnlineGame(
+                    id=game.get("id", 0),
+                    name=game.get("name", "Unknown"),
+                    platform=platform_name,
+                    year=year,
+                    publisher=publisher,
+                    cover_url=cover_url,
+                    summary=summary,
+                    genres=genres,
                 )
+            )
 
-            return results
+        return results
 
-        except json.JSONDecodeError:
-            return []
-        except Exception as e:
-            print(f"IGDB search error: {e}")
-            return []
+    def get_game_details(self, game_id: int) -> Optional[GameDetails]:
+        game_query = f"fields name, summary, storyline, screenshots.url, videos.video_id, genres.name, first_release_date, rating; where id = {game_id};"
+
+        data = self._igdb_request("games", game_query)
+        if not data or len(data) == 0:
+            return None
+
+        game = data[0]
+
+        screenshots = []
+        if game.get("screenshots"):
+            for ss in game["screenshots"]:
+                url = ss.get("url", "")
+                if url:
+                    url = url.replace("t_thumb", "t_screenshot_huge")
+                    if not url.startswith("http"):
+                        url = f"https:{url}"
+                    screenshots.append(url)
+
+        videos = []
+        if game.get("videos"):
+            for video in game["videos"]:
+                video_id = video.get("video_id")
+                if video_id:
+                    videos.append(
+                        {
+                            "id": video_id,
+                            "url": f"https://youtube.com/watch?v={video_id}",
+                        }
+                    )
+
+        genres = []
+        if game.get("genres"):
+            for genre in game["genres"]:
+                if isinstance(genre, dict) and genre.get("name"):
+                    genres.append(genre["name"])
+
+        return GameDetails(
+            id=game.get("id", 0),
+            name=game.get("name", ""),
+            summary=game.get("summary"),
+            storyline=game.get("storyline"),
+            screenshots=screenshots,
+            videos=videos,
+            genres=genres,
+            release_date=game.get("first_release_date"),
+            rating=game.get("rating"),
+        )
 
     def get_emulator_info(self, emulator_key: str) -> Optional[OnlineEmulator]:
         if emulator_key not in self._emulator_database:

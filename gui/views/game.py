@@ -13,7 +13,9 @@ class GameView:
     def __init__(self, app: "VRetroApp", game) -> None:
         self.app = app
         self.game = game
-        self.show_details = False
+        self.show_details = True
+        self.game_details = None
+        self.is_playing = False
 
     def create(self) -> ft.Container:
         graphics_dir = self.game.path / "graphics"
@@ -25,8 +27,13 @@ class GameView:
         if not logo_path.exists():
             logo_path = self.game.path / "assets" / "logo.png"
 
+        if self.app.config.igdb_client_id and self.app.config.igdb_client_secret:
+            self._load_game_details()
+
         hero_section = self._create_hero(hero_path, logo_path)
         launch_section = self._create_launch_section()
+        description_section = self._create_description_section()
+        screenshots_section = self._create_screenshots_section()
         details_section = self._create_details_section()
 
         return ft.Container(
@@ -36,6 +43,8 @@ class GameView:
                     ft.Column(
                         [
                             launch_section,
+                            description_section,
+                            screenshots_section,
                             details_section,
                         ],
                         scroll=ft.ScrollMode.AUTO,
@@ -60,7 +69,7 @@ class GameView:
                 )
             else:
                 logo_widget = ft.Text(
-                    self.game.metadata.name,
+                    self.game.metadata.get_title(),
                     size=48,
                     weight=ft.FontWeight.BOLD,
                     color=ft.Colors.WHITE,
@@ -123,7 +132,7 @@ class GameView:
             content=ft.Row(
                 [
                     ft.Text(
-                        self.game.metadata.name,
+                        self.game.metadata.get_title(),
                         size=48,
                         weight=ft.FontWeight.BOLD,
                     ),
@@ -146,6 +155,16 @@ class GameView:
                 playtime_str = f"{hours}h {minutes}m played"
             else:
                 playtime_str = f"{minutes}m played"
+
+        self.launch_button = ft.FilledButton(
+            "launch",
+            icon=ft.Icons.PLAY_ARROW,
+            on_click=lambda _: self._launch(),
+            height=70,
+            style=ft.ButtonStyle(
+                text_style=ft.TextStyle(size=24, weight=ft.FontWeight.BOLD),
+            ),
+        )
 
         options_menu = ft.PopupMenuButton(
             icon=ft.Icons.ARROW_DROP_DOWN,
@@ -188,15 +207,7 @@ class GameView:
         return ft.Container(
             content=ft.Row(
                 [
-                    ft.FilledButton(
-                        "launch",
-                        icon=ft.Icons.PLAY_ARROW,
-                        on_click=lambda _: self._launch(),
-                        height=70,
-                        style=ft.ButtonStyle(
-                            text_style=ft.TextStyle(size=24, weight=ft.FontWeight.BOLD),
-                        ),
-                    ),
+                    self.launch_button,
                     options_menu,
                     ft.IconButton(
                         icon=ft.Icons.IMAGE_SEARCH,
@@ -216,6 +227,96 @@ class GameView:
             padding=40,
         )
 
+    def _create_screenshots_section(self) -> ft.Container:
+        if not self.game_details or not self.game_details.screenshots:
+            return ft.Container()
+
+        screenshot_list = ft.Row(
+            scroll=ft.ScrollMode.AUTO,
+            spacing=10,
+        )
+
+        for i, url in enumerate(self.game_details.screenshots[:6]):
+            screenshot_list.controls.append(
+                ft.Container(
+                    content=ft.Image(
+                        src=url,
+                        width=300,
+                        height=170,
+                        fit=ft.BoxFit.COVER,
+                        border_radius=8,
+                    ),
+                    ink=True,
+                    on_click=lambda _, u=url: self._open_url(u),
+                )
+            )
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Container(
+                        content=ft.Text(
+                            "screenshots",
+                            size=18,
+                            weight=ft.FontWeight.W_500,
+                        ),
+                        padding=ft.padding.only(left=40, right=40, bottom=10),
+                    ),
+                    ft.Container(
+                        content=screenshot_list,
+                        padding=ft.padding.only(left=40, right=40),
+                    ),
+                ]
+            )
+        )
+
+    def _create_description_section(self) -> ft.Container:
+        if not self.game_details:
+            return ft.Container()
+
+        content = []
+
+        if self.game_details.genres:
+            content.append(
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Container(
+                                content=ft.Text(
+                                    genre,
+                                    size=12,
+                                    weight=ft.FontWeight.W_400,
+                                ),
+                                padding=ft.padding.symmetric(horizontal=12, vertical=6),
+                                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                                border_radius=16,
+                            )
+                            for genre in self.game_details.genres
+                        ],
+                        spacing=8,
+                        wrap=True,
+                    ),
+                    padding=ft.padding.only(bottom=15),
+                )
+            )
+
+        if self.game_details.summary:
+            content.append(
+                ft.Text(
+                    self.game_details.summary,
+                    size=14,
+                    color=ft.Colors.ON_SURFACE_VARIANT,
+                )
+            )
+
+        if not content:
+            return ft.Container()
+
+        return ft.Container(
+            content=ft.Column(content, spacing=10),
+            padding=ft.padding.only(left=40, right=40),
+        )
+
     def _create_details_section(self) -> ft.Container:
         publisher = (
             list(self.game.metadata.publisher.values())[0]
@@ -225,41 +326,55 @@ class GameView:
 
         console_meta = self.app.library.get_console_metadata(self.game.metadata.console)
 
-        detail_rows = [
-            self._detail_row(
+        detail_rows = []
+
+        detail_rows.append(
+            self._detail_item(
                 "console",
                 console_meta.name if console_meta else self.game.metadata.console,
-            ),
-            self._detail_row("year", str(self.game.metadata.year)),
-            self._detail_row("publisher", publisher),
-            self._detail_row("region", self.game.metadata.region),
-        ]
+            )
+        )
+
+        if self.game_details and self.game_details.genres:
+            detail_rows.append(
+                self._detail_item("genres", " • ".join(self.game_details.genres))
+            )
+
+        detail_rows.append(self._detail_item("year", str(self.game.metadata.year)))
+        detail_rows.append(self._detail_item("publisher", publisher))
+        detail_rows.append(self._detail_item("region", self.game.metadata.region))
 
         if console_meta:
-            detail_rows.append(self._detail_row("emulator", console_meta.emulator.name))
+            detail_rows.append(
+                self._detail_item("emulator", console_meta.emulator.name)
+            )
+
+        if self.game_details and self.game_details.rating:
+            detail_rows.append(
+                self._detail_item("rating", f"{self.game_details.rating:.1f}/100")
+            )
 
         dlc_dir = self.game.resources_path / "dlc"
         if dlc_dir.exists() and any(dlc_dir.iterdir()):
             detail_rows.append(
-                self._detail_row(
-                    "dlc", f"{len(list(dlc_dir.iterdir()))} files", ft.Icons.EXTENSION
-                )
+                self._detail_item("dlc", f"{len(list(dlc_dir.iterdir()))} files")
             )
 
         updates_dir = self.game.resources_path / "updates"
         if updates_dir.exists() and any(updates_dir.iterdir()):
             detail_rows.append(
-                self._detail_row(
-                    "updates",
-                    f"{len(list(updates_dir.iterdir()))} files",
-                    ft.Icons.SYSTEM_UPDATE,
+                self._detail_item(
+                    "updates", f"{len(list(updates_dir.iterdir()))} files"
                 )
             )
 
-        self.details_content = ft.Column(
-            detail_rows,
-            visible=self.show_details,
-            spacing=12,
+        self.details_content = ft.Container(
+            content=ft.Column(
+                detail_rows,
+                spacing=15,
+            ),
+            visible=True,
+            padding=ft.padding.only(top=10),
         )
 
         return ft.Container(
@@ -272,9 +387,9 @@ class GameView:
                                 ft.Text("details", size=18, weight=ft.FontWeight.W_500),
                                 ft.Container(expand=True),
                                 ft.Icon(
-                                    ft.Icons.EXPAND_MORE
-                                    if not self.show_details
-                                    else ft.Icons.EXPAND_LESS,
+                                    ft.Icons.EXPAND_LESS
+                                    if self.show_details
+                                    else ft.Icons.EXPAND_MORE,
                                     size=20,
                                 ),
                             ],
@@ -290,28 +405,17 @@ class GameView:
             padding=ft.padding.only(left=40, right=40, bottom=40),
         )
 
-    def _detail_row(self, label: str, value: str, icon=None) -> ft.Container:
-        label_parts = []
-        if icon:
-            label_parts.append(ft.Icon(icon, size=16))
-        label_parts.append(
-            ft.Text(
-                label,
-                size=14,
-                weight=ft.FontWeight.W_500,
-                color=ft.Colors.ON_SURFACE_VARIANT,
-            )
-        )
-
+    def _detail_item(self, label: str, value: str) -> ft.Container:
         return ft.Container(
             content=ft.Row(
                 [
                     ft.Container(
-                        content=ft.Row(
-                            label_parts,
-                            spacing=8,
+                        content=ft.Text(
+                            label,
+                            size=14,
+                            color=ft.Colors.ON_SURFACE_VARIANT,
                         ),
-                        width=120,
+                        width=100,
                     ),
                     ft.Text(
                         value,
@@ -329,7 +433,27 @@ class GameView:
         self.details_content.visible = self.show_details
         self.app.page.update()
 
+    def _load_game_details(self) -> None:
+        if self.game.metadata.id > 0:
+            details = self.app.db.get_game_details(self.game.metadata.id)
+            if details:
+                self.game_details = details
+
+    def _open_url(self, url: str) -> None:
+        import webbrowser
+
+        webbrowser.open(url)
+
     def _launch(self, fullscreen: bool = None, debug: bool = False) -> None:
+        if self.is_playing:
+            return
+
+        self.is_playing = True
+        self.launch_button.text = "playing"
+        self.launch_button.icon = ft.Icons.STOP
+        self.launch_button.disabled = False
+        self.app.page.update()
+
         success = launch_game(
             self.game,
             self.app.config,
@@ -339,10 +463,15 @@ class GameView:
             debug=debug,
         )
 
+        self.is_playing = False
+        self.launch_button.text = "launch"
+        self.launch_button.icon = ft.Icons.PLAY_ARROW
+
         if success:
             self.app.library.scan(verbose=False)
             self.app.show_game(self.game)
         else:
+            self.app.page.update()
             self._show_error(
                 "launch failed", f"couldn't launch {self.game.metadata.get_title()}"
             )
