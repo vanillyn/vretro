@@ -61,7 +61,7 @@ def download_emulator(
 
         install_dir.mkdir(parents=True, exist_ok=True)
 
-        if not _extract_archive(tmp_path, filename, install_dir):
+        if not _extract_archive(tmp_path, filename, install_dir, emulator_name):
             term.print("[red]failed to extract archive[/red]")
             return False
 
@@ -156,39 +156,71 @@ def _save_temp_file(response: requests.Response) -> Path:
         return Path(tmp_file.name)
 
 
-def _extract_archive(archive_path: Path, filename: str, dest_dir: Path) -> bool:
+def _clean_appimage_name(filename: str, emulator_name: str) -> str:
+    filename_lower = filename.lower()
+
+    known_emulators = {
+        "yuzu": "yuzu",
+        "ryujinx": "ryujinx",
+        "dolphin": "dolphin",
+        "pcsx2": "pcsx2",
+        "ppsspp": "ppsspp",
+        "retroarch": "retroarch",
+        "duckstation": "duckstation",
+        "rpcs3": "rpcs3",
+    }
+
+    for emu_key, emu_bin in known_emulators.items():
+        if emu_key in filename_lower:
+            return emu_bin
+
+    binary_name = filename_lower.replace(".appimage", "")
+
+    binary_name = binary_name.split("-")[0]
+    binary_name = binary_name.split("_")[0]
+
+    for char in "0123456789.v":
+        binary_name = binary_name.rstrip(char)
+
+    if binary_name:
+        return binary_name
+
+    return emulator_name.lower().replace(" ", "-")
+
+
+def _extract_archive(
+    archive_path: Path, filename: str, dest_dir: Path, emulator_name: str = ""
+) -> bool:
     try:
         if filename.endswith(".appimage"):
-            filename_lower = filename.lower()
-            binary_name = filename_lower.replace(".appimage", "")
-
-            binary_name = binary_name.split("-")[0]
-            binary_name = binary_name.split("_")[0]
-
-            for char in "0123456789.v":
-                binary_name = binary_name.rstrip(char)
+            binary_name = _clean_appimage_name(filename, emulator_name)
 
             dest_file = dest_dir / binary_name
             dest_file.write_bytes(archive_path.read_bytes())
             dest_file.chmod(0o755)
+
         elif filename.endswith((".tar.gz", ".tgz")):
             with tarfile.open(archive_path, "r:gz") as tar:
                 tar.extractall(dest_dir)
                 _flatten_if_single_dir(dest_dir)
+
         elif filename.endswith((".tar.xz", ".tar.bz2")):
             mode = "r:xz" if filename.endswith(".xz") else "r:bz2"
             with tarfile.open(archive_path, mode) as tar:
                 tar.extractall(dest_dir)
                 _flatten_if_single_dir(dest_dir)
+
         elif filename.endswith(".zip"):
             with zipfile.ZipFile(archive_path, "r") as zip_ref:
                 zip_ref.extractall(dest_dir)
                 _flatten_if_single_dir(dest_dir)
+
         else:
             dest_file = dest_dir / filename
             dest_file.write_bytes(archive_path.read_bytes())
             if not IS_WINDOWS:
                 dest_file.chmod(0o755)
+
         return True
     except Exception:
         return False

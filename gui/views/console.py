@@ -66,6 +66,7 @@ class ConsoleView:
                 logo_widget = ft.Image(
                     src=str(logo_path),
                     width=400,
+                    height=200,
                     fit=ft.BoxFit.CONTAIN,
                 )
             else:
@@ -113,7 +114,7 @@ class ConsoleView:
                             gradient=ft.LinearGradient(
                                 begin=ft.Alignment.TOP_CENTER,
                                 end=ft.Alignment.BOTTOM_CENTER,
-                                colors=["#00000000", "#000000CC"],
+                                colors=["#00000000", "#000000DD"],
                             ),
                         ),
                         ft.Container(

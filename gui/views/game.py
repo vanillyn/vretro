@@ -65,6 +65,7 @@ class GameView:
                 logo_widget = ft.Image(
                     src=str(logo_path),
                     width=400,
+                    height=200,
                     fit=ft.BoxFit.CONTAIN,
                 )
             else:
@@ -85,15 +86,6 @@ class GameView:
                             fit=ft.BoxFit.COVER,
                         ),
                         ft.Container(
-                            width=float("inf"),
-                            height=300,
-                            gradient=ft.LinearGradient(
-                                begin=ft.Alignment.TOP_CENTER,
-                                end=ft.Alignment.BOTTOM_CENTER,
-                                colors=["#00000000", "#000000CC"],
-                            ),
-                        ),
-                        ft.Container(
                             content=ft.Column(
                                 [
                                     ft.Container(expand=True),
@@ -104,6 +96,15 @@ class GameView:
                             padding=40,
                             width=float("inf"),
                             height=300,
+                        ),
+                        ft.Container(
+                            width=float("inf"),
+                            height=300,
+                            gradient=ft.LinearGradient(
+                                begin=ft.Alignment.TOP_CENTER,
+                                end=ft.Alignment.BOTTOM_CENTER,
+                                colors=["#00000000", "#000000DD"],
+                            ),
                         ),
                     ],
                     width=float("inf"),

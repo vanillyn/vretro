@@ -218,7 +218,7 @@ class OnlineDatabase:
             if platform_id:
                 platform_filter = f" & platforms = [{platform_id}]"
 
-        igdb_query = f'fields name, first_release_date, involved_companies.company.name, platforms.name, cover.url, summary, genres.name; search "{query}"; where category = 0{platform_filter}; limit 50;'
+        igdb_query = f'fields name, first_release_date, involved_companies.company.name, platforms.name, cover.url, summary, genres.name; search "{query}"; where version_parent = null{platform_filter}; limit 50;'
 
         data = self._igdb_request("games", igdb_query)
         if not data:

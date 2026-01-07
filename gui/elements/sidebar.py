@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import flet as ft
 
@@ -15,8 +15,11 @@ class Sidebar:
         self.list_view: ft.ListView = None
         self.collapsed = False
         self.content_column: ft.Column = None
+        self.downloads_panel = None
 
-    def create(self) -> ft.Container:
+    def create(self, downloads_panel=None) -> ft.Container:
+        self.downloads_panel = downloads_panel
+
         self.title_text = ft.Text(
             "consoles",
             size=12,
@@ -28,7 +31,7 @@ class Sidebar:
             expand=True,
         )
 
-        self.content_column = ft.Column(
+        main_content = ft.Column(
             [
                 ft.Container(
                     content=ft.Row(
@@ -62,7 +65,25 @@ class Sidebar:
                 ),
             ],
             spacing=0,
+            expand=True,
         )
+
+        if downloads_panel:
+            sidebar_column = ft.Column(
+                [
+                    ft.Container(
+                        content=main_content,
+                        expand=True,
+                    ),
+                    downloads_panel.create(),
+                ],
+                spacing=0,
+                expand=True,
+            )
+        else:
+            sidebar_column = main_content
+
+        self.content_column = sidebar_column
 
         self.container = ft.Container(
             width=280,
@@ -91,7 +112,13 @@ class Sidebar:
 
         if self.collapsed:
             self.container.width = 60
-            self.content_column.visible = False
+
+            if isinstance(self.content_column, ft.Column):
+                for control in self.content_column.controls:
+                    control.visible = False
+            else:
+                self.content_column.visible = False
+
             icon_button = self.container.content.controls[1]
             icon_button.content.icon = ft.Icons.CHEVRON_RIGHT
             icon_button.content.tooltip = "expand sidebar"
@@ -99,7 +126,13 @@ class Sidebar:
             icon_button.right = None
         else:
             self.container.width = 280
-            self.content_column.visible = True
+
+            if isinstance(self.content_column, ft.Column):
+                for control in self.content_column.controls:
+                    control.visible = True
+            else:
+                self.content_column.visible = True
+
             icon_button = self.container.content.controls[1]
             icon_button.content.icon = ft.Icons.CHEVRON_LEFT
             icon_button.content.tooltip = "collapse sidebar"
@@ -125,7 +158,8 @@ class Sidebar:
         else:
             self._populate_games()
 
-        self.app.page.update()
+        if self.app.page:
+            self.app.page.update()
 
     def _populate_consoles(self) -> None:
         self.title_text.value = "consoles"

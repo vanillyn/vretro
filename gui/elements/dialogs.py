@@ -1,13 +1,15 @@
 import re
 import sys
 import threading
+import zipfile
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Set
 
 import flet as ft
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from gui.util.downloads import DownloadManager
 from src.data.config import VRetroConfig
 from src.data.console import get_console_metadata
 from src.data.library import CONSOLE_EXTENSIONS, GameMetadata
@@ -792,6 +794,7 @@ class InstallGameDialog:
         sources,
         db,
         steamgrid,
+        download_manager: "DownloadManager",
         on_install: Callable,
     ) -> None:
         self.page = page
@@ -800,10 +803,10 @@ class InstallGameDialog:
         self.sources = sources
         self.db = db
         self.steamgrid = steamgrid
+        self.download_manager = download_manager
         self.on_install = on_install
         self.selected_games: Set[str] = set()
         self.game_results = []
-        self.installing = False
 
     def create(self) -> ft.AlertDialog:
         self.search_input = ft.TextField(
@@ -822,6 +825,13 @@ class InstallGameDialog:
             "install selected",
             icon=ft.Icons.DOWNLOAD,
             on_click=self._install_selected,
+            visible=False,
+        )
+
+        self.background_button = ft.OutlinedButton(
+            "download in background",
+            icon=ft.Icons.DOWNLOAD_FOR_OFFLINE,
+            on_click=self._download_in_background,
             visible=False,
         )
 
@@ -847,18 +857,21 @@ class InstallGameDialog:
             ),
             actions=[
                 self.install_button,
+                self.background_button,
                 ft.TextButton("close", on_click=lambda _: self.page.pop_dialog()),
             ],
         )
 
     def _on_search(self, e) -> None:
-        self.game_list.controls.clear()
-        self.selected_games.clear()
-        self.install_button.visible = False
         query = self.search_input.value
 
         if not query:
             return
+
+        self.game_list.controls.clear()
+        self.selected_games.clear()
+        self.install_button.visible = False
+        self.background_button.visible = False
 
         progress = ft.ProgressRing()
         self.game_list.controls.append(
@@ -866,16 +879,27 @@ class InstallGameDialog:
         )
         self.page.update()
 
-        def search_thread():
+        async def search_thread():
             vrdb_games = self.sources.search_games(self.console.upper(), query)
+
             igdb_games = self.db.search_games(query, self.console)
 
-            igdb_map = {g.name.lower(): g for g in igdb_games}
+            vrdb_map = {gn.lower(): (gn, src) for gn, src in vrdb_games}
 
             self.game_results = []
-            for game_name, source in vrdb_games:
-                igdb_game = igdb_map.get(game_name.lower())
-                self.game_results.append((game_name, source, igdb_game))
+
+            for igdb_game in igdb_games[:30]:
+                game_name = igdb_game.name
+                vrdb_match = vrdb_map.get(game_name.lower())
+
+                if vrdb_match:
+                    vrdb_name, source = vrdb_match
+                    self.game_results.append((vrdb_name, source, igdb_game))
+                    del vrdb_map[game_name.lower()]
+                    self.page.update()
+
+            for vrdb_name, source in vrdb_map.values():
+                self.game_results.append((vrdb_name, source, None))
 
             self.game_list.controls.clear()
 
@@ -890,7 +914,7 @@ class InstallGameDialog:
 
             self.page.update()
 
-        threading.Thread(target=search_thread, daemon=True).start()
+        self.page.run_task(search_thread)
 
     def _create_game_card(self, game_name: str, source, igdb_game) -> ft.Control:
         is_selected = game_name in self.selected_games
@@ -902,23 +926,7 @@ class InstallGameDialog:
 
         cover = None
 
-        if self.steamgrid and self.steamgrid.api_key:
-            games = self.steamgrid.search_game(game_name)
-            if games and len(games) > 0:
-                game_id = games[0].get("id")
-                assets = self.steamgrid.get_assets(game_id, "grids")
-                if assets and len(assets) > 0:
-                    url = assets[0].get("thumb") or assets[0].get("url")
-                    if url:
-                        cover = ft.Image(
-                            src=url,
-                            width=80,
-                            height=120,
-                            fit=ft.BoxFit.COVER,
-                            border_radius=4,
-                        )
-
-        if not cover and igdb_game and igdb_game.cover_url:
+        if igdb_game and igdb_game.cover_url:
             cover = ft.Image(
                 src=igdb_game.cover_url,
                 width=80,
@@ -997,13 +1005,11 @@ class InstallGameDialog:
 
         install_btn = ft.IconButton(
             icon=ft.Icons.DOWNLOAD,
-            tooltip="install",
-            on_click=lambda _,
-            gn=game_name,
-            s=source,
-            ig=igdb_game: self._install_single(gn, s, ig),
+            tooltip="install now",
+            on_click=lambda _, gn=game_name, s=source, ig=igdb_game: self._queue_single(
+                gn, s, ig
+            ),
         )
-
         return ft.Container(
             content=ft.Row(
                 [
@@ -1032,11 +1038,16 @@ class InstallGameDialog:
             self.selected_games.add(game_name)
 
         self.install_button.visible = len(self.selected_games) > 0
-        self.install_button.text = (
-            f"install {len(self.selected_games)} selected"
-            if len(self.selected_games) > 1
-            else "install selected"
-        )
+        self.background_button.visible = len(self.selected_games) > 0
+
+        if len(self.selected_games) > 1:
+            self.install_button.text = f"install {len(self.selected_games)} selected"
+            self.background_button.text = (
+                f"download {len(self.selected_games)} in background"
+            )
+        else:
+            self.install_button.text = "install selected"
+            self.background_button.text = "download in background"
 
         for i, (gn, _, _) in enumerate(self.game_results):
             card = self.game_list.controls[i]
@@ -1048,174 +1059,42 @@ class InstallGameDialog:
         self.page.update()
 
     def _install_selected(self, e) -> None:
-        if self.installing or not self.selected_games:
-            return
-
-        self.installing = True
         games_to_install = [
             (gn, s, ig) for gn, s, ig in self.game_results if gn in self.selected_games
         ]
 
-        self.game_list.controls.clear()
-        self.install_button.visible = False
-
         for game_name, source, igdb_game in games_to_install:
-            self._add_install_progress(game_name)
-
-        self.page.update()
-
-        def install_thread():
-            for i, (game_name, source, igdb_game) in enumerate(games_to_install):
-                self._install_game_worker(game_name, source, igdb_game, i)
-
-            self.installing = False
-            self.page.pop_dialog()
-            self._show_info(
-                "installation complete",
-                f"installed {len(games_to_install)} games",
+            self.download_manager.queue_download(
+                game_name, self.console, source, igdb_game
             )
-            self.on_install()
 
-        threading.Thread(target=install_thread, daemon=True).start()
+        self.page.pop_dialog()
+        self._show_info(
+            "downloads queued", f"queued {len(games_to_install)} games for download"
+        )
+        self.on_install()
 
-    def _install_single(self, game_name: str, source, igdb_game) -> None:
-        if self.installing:
-            return
+    def _download_in_background(self, e) -> None:
+        games_to_queue = [
+            (gn, s, ig) for gn, s, ig in self.game_results if gn in self.selected_games
+        ]
 
-        self.installing = True
-        self.game_list.controls.clear()
-        self.install_button.visible = False
+        for game_name, source, igdb_game in games_to_queue:
+            self.download_manager.queue_download(
+                game_name, self.console, source, igdb_game
+            )
 
-        self._add_install_progress(game_name)
-        self.page.update()
-
-        def install_thread():
-            self._install_game_worker(game_name, source, igdb_game, 0)
-            self.installing = False
-            self.page.pop_dialog()
-            self._show_info("success", f"installed {game_name}")
-            self.on_install()
-
-        threading.Thread(target=install_thread, daemon=True).start()
-
-    def _add_install_progress(self, game_name: str) -> None:
-        progress_bar = ft.ProgressBar(width=400, value=0)
-        status_text = ft.Text("preparing...", size=12)
-
-        container = ft.Container(
-            content=ft.Column(
-                [
-                    ft.Text(
-                        game_name,
-                        size=16,
-                        weight=ft.FontWeight.W_500,
-                    ),
-                    progress_bar,
-                    status_text,
-                ],
-                spacing=5,
-            ),
-            padding=10,
-            border=ft.border.all(1, ft.Colors.OUTLINE),
-            border_radius=8,
+        self.page.pop_dialog()
+        self._show_info(
+            "downloads started",
+            f"downloading {len(games_to_queue)} games in background",
         )
 
-        self.game_list.controls.append(container)
+    def _queue_single(self, game_name: str, source, igdb_game) -> None:
+        self.download_manager.queue_download(game_name, self.console, source, igdb_game)
 
-    def _update_progress(self, idx: int, status: str, value: float) -> None:
-        if idx < len(self.game_list.controls):
-            container = self.game_list.controls[idx]
-            column = container.content
-            progress_bar = column.controls[1]
-            status_text = column.controls[2]
-
-            progress_bar.value = value
-            status_text.value = status
-            self.page.update()
-
-    def _install_game_worker(self, game_name: str, source, igdb_game, idx: int) -> None:
-        try:
-            console_code_upper = self.console.upper()
-            console_meta = self.library.get_console_metadata(console_code_upper)
-
-            if not console_meta:
-                self._update_progress(idx, "error: console not found", 0)
-                return
-
-            console_dir = self.library.console_root / console_meta.name
-            games_dir = console_dir / "games"
-
-            game_slug = re.sub(r"[^\w\s-]", "", game_name.lower())
-            game_slug = re.sub(r"[-\s]+", "-", game_slug).strip("-")
-
-            game_dir = games_dir / game_slug
-            game_dir.mkdir(parents=True, exist_ok=True)
-            (game_dir / "resources").mkdir(exist_ok=True)
-            (game_dir / "saves").mkdir(exist_ok=True)
-            (game_dir / "graphics").mkdir(exist_ok=True)
-
-            download_dir = game_dir / "resources"
-            extension = CONSOLE_EXTENSIONS.get(console_code_upper, "bin")
-            dest_file = download_dir / f"base.{extension}"
-
-            self._update_progress(idx, "downloading game...", 0.2)
-
-            success = self.sources.download_file(source, dest_file, game_name)
-
-            if not success:
-                self._update_progress(idx, "download failed", 0)
-                return
-
-            self._update_progress(idx, "creating metadata...", 0.5)
-
-            metadata = GameMetadata(
-                code=f"{console_code_upper.lower()}-{game_slug}",
-                console=console_code_upper,
-                id=0,
-                title={"NA": game_name},
-                publisher={"NA": "unknown"},
-                year=0,
-                region="NA",
-            )
-
-            if igdb_game:
-                metadata.id = igdb_game.id
-                metadata.title = {"NA": igdb_game.name}
-                metadata.publisher = {"NA": igdb_game.publisher or "unknown"}
-                metadata.year = igdb_game.year or 0
-
-            metadata.save(game_dir / "metadata.json")
-
-            if self.steamgrid and self.steamgrid.api_key:
-                try:
-                    self._update_progress(idx, "downloading artwork...", 0.8)
-
-                    graphics_dir = game_dir / "graphics"
-                    graphics_dir.mkdir(parents=True, exist_ok=True)
-
-                    games = self.steamgrid.search_game(game_name)
-                    if games and len(games) > 0:
-                        game_id = games[0].get("id")
-
-                        for asset_type, file_name in [
-                            ("grids", "grid"),
-                            ("heroes", "hero"),
-                            ("logos", "logo"),
-                            ("icons", "icon"),
-                        ]:
-                            assets = self.steamgrid.get_assets(game_id, asset_type)
-                            if assets and len(assets) > 0:
-                                url = assets[0].get("url")
-                                if url:
-                                    dest = graphics_dir / f"{file_name}.png"
-                                    self.steamgrid.download_asset(url, dest)
-                except Exception:
-                    pass
-
-            self._update_progress(idx, "complete", 1.0)
-
-        except Exception as e:
-            self._update_progress(idx, f"error: {str(e)}", 0)
+        self.page.pop_dialog()
+        self._show_info("download started", f"downloading {game_name}")
 
     def _show_error(self, title: str, message: str) -> None:
         dialog = ft.AlertDialog(
