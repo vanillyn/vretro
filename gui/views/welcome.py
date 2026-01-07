@@ -71,7 +71,7 @@ class WelcomeView:
                 console_code,
                 console_meta,
                 len(games),
-                lambda _: self.app.show_console(console_code),
+                lambda _, cc=console_code: self.app.show_console(cc),
                 self._get_console_path(console_meta),
             ).create()
             self.console_grid.controls.append(card)
