@@ -56,12 +56,12 @@ class Sidebar:
                 ft.Divider(height=1),
                 ft.Container(
                     content=self.title_text,
-                    padding=ft.padding.only(left=20, right=20, top=20, bottom=10),
+                    padding=ft.Padding.only(left=20, right=20, top=20, bottom=10),
                 ),
                 ft.Container(
                     content=self.list_view,
                     expand=True,
-                    padding=ft.padding.only(left=10, right=10),
+                    padding=ft.Padding.only(left=10, right=10),
                 ),
             ],
             spacing=0,

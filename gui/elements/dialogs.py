@@ -14,6 +14,7 @@ from src.data.config import VRetroConfig
 from src.data.console import get_console_metadata
 from src.data.library import CONSOLE_EXTENSIONS, GameMetadata
 from src.util.download import download_emulator
+from src.util.mods import ModInfo, ModManager
 
 
 class FirstTimeSetupDialog:
@@ -611,7 +612,7 @@ class InstallConsoleDialog:
 
         details_container = ft.Container(
             visible=False,
-            padding=ft.padding.only(top=10),
+            padding=ft.Padding.only(top=10),
         )
 
         def toggle_details(_):
@@ -667,7 +668,7 @@ class InstallConsoleDialog:
                                     spacing=5,
                                 ),
                                 expand=True,
-                                padding=ft.padding.only(left=10),
+                                padding=ft.Padding.only(left=10),
                             ),
                             info_btn,
                             install_btn,
@@ -1018,7 +1019,7 @@ class InstallGameDialog:
                     ft.Container(
                         content=ft.Column(content_column, spacing=8),
                         expand=True,
-                        padding=ft.padding.only(left=10),
+                        padding=ft.Padding.only(left=10),
                     ),
                     install_btn,
                 ],
@@ -1526,3 +1527,245 @@ class IGDBSearchDialog:
             actions=[ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog())],
         )
         self.page.show_dialog(dialog)
+
+
+class ModManagerDialog:
+    def __init__(
+        self,
+        page: ft.Page,
+        mod_manager: "ModManager",
+        on_save: Callable,
+    ) -> None:
+        self.page = page
+        self.mod_manager = mod_manager
+        self.on_save = on_save
+
+    def create(self) -> ft.AlertDialog:
+        self.mod_list = ft.Column(
+            spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
+
+        self._populate_mods()
+
+        return ft.AlertDialog(
+            title=ft.Text("manage mods"),
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Text(
+                                    "add, enable, and configure mods",
+                                    size=12,
+                                    color=ft.Colors.ON_SURFACE_VARIANT,
+                                ),
+                                ft.Container(expand=True),
+                                ft.IconButton(
+                                    icon=ft.Icons.ADD,
+                                    tooltip="add mod",
+                                    on_click=self._add_mod,
+                                ),
+                                ft.IconButton(
+                                    icon=ft.Icons.REFRESH,
+                                    tooltip="refresh",
+                                    on_click=lambda _: self._refresh(),
+                                ),
+                            ]
+                        ),
+                        ft.Divider(height=10),
+                        self.mod_list,
+                    ],
+                    spacing=0,
+                ),
+                width=700,
+                height=500,
+            ),
+            actions=[
+                ft.TextButton("close", on_click=lambda _: self._close()),
+            ],
+        )
+
+    def _populate_mods(self) -> None:
+        self.mod_list.controls.clear()
+
+        if not self.mod_manager.mods:
+            self.mod_list.controls.append(
+                ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Icon(
+                                ft.Icons.EXTENSION_OFF,
+                                size=48,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                            ft.Text(
+                                "no mods found",
+                                size=16,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                            ft.Text(
+                                "click + to add a mod",
+                                size=12,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=10,
+                    ),
+                    alignment=ft.Alignment.CENTER,
+                    expand=True,
+                )
+            )
+            return
+
+        for mod in self.mod_manager.mods:
+            card = self._create_mod_card(mod)
+            self.mod_list.controls.append(card)
+
+    def _create_mod_card(self, mod: "ModInfo") -> ft.Container:
+        enable_switch = ft.Switch(
+            value=mod.enabled,
+            on_change=lambda e, m=mod: self._toggle_mod(m, e.control.value),
+        )
+
+        install_path_input = ft.TextField(
+            label="install path",
+            value=mod.install_path,
+            hint_text="leave blank for default",
+            dense=True,
+            on_change=lambda e, m=mod: self._update_install_path(m, e.control.value),
+        )
+
+        details_visible = False
+        details_container = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(f"version: {mod.version}", size=12),
+                    ft.Text(f"author: {mod.author}", size=12),
+                    install_path_input,
+                ],
+                spacing=10,
+            ),
+            visible=False,
+            padding=ft.Padding.only(top=10),
+        )
+
+        def toggle_details(e):
+            nonlocal details_visible
+            details_visible = not details_visible
+            details_container.visible = details_visible
+            self.page.update()
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Icon(
+                                ft.Icons.EXTENSION,
+                                size=32,
+                                color=ft.Colors.PRIMARY
+                                if mod.enabled
+                                else ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                            ft.Column(
+                                [
+                                    ft.Text(
+                                        mod.name,
+                                        size=16,
+                                        weight=ft.FontWeight.W_500,
+                                    ),
+                                    ft.Text(
+                                        mod.description or "no description",
+                                        size=12,
+                                        color=ft.Colors.ON_SURFACE_VARIANT,
+                                        max_lines=2,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                    ),
+                                ],
+                                spacing=4,
+                                expand=True,
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.INFO_OUTLINE,
+                                on_click=toggle_details,
+                                tooltip="show details",
+                            ),
+                            enable_switch,
+                            ft.IconButton(
+                                icon=ft.Icons.DELETE_OUTLINE,
+                                on_click=lambda _, m=mod: self._remove_mod(m),
+                                tooltip="remove mod",
+                            ),
+                        ],
+                        spacing=10,
+                    ),
+                    details_container,
+                ],
+                spacing=0,
+            ),
+            border=ft.border.all(
+                2 if mod.enabled else 1,
+                ft.Colors.PRIMARY if mod.enabled else ft.Colors.OUTLINE,
+            ),
+            border_radius=12,
+            padding=15,
+            animate=ft.animation.Animation(300, ft.AnimationCurve.EASE_OUT),
+        )
+
+    def _toggle_mod(self, mod: "ModInfo", enabled: bool) -> None:
+        if enabled:
+            self.mod_manager.enable_mod(mod.name, mod.install_path)
+        else:
+            self.mod_manager.disable_mod(mod.name)
+
+        self._populate_mods()
+        self.page.update()
+
+    def _update_install_path(self, mod: "ModInfo", path: str) -> None:
+        mod.install_path = path
+        self.mod_manager.save_config()
+
+    def _remove_mod(self, mod: "ModInfo") -> None:
+        confirm = ft.AlertDialog(
+            title=ft.Text("remove mod"),
+            content=ft.Text(f"are you sure you want to remove {mod.name}?"),
+            actions=[
+                ft.TextButton("cancel", on_click=lambda _: self.page.pop_dialog()),
+                ft.FilledButton(
+                    "remove",
+                    on_click=lambda _: self._confirm_remove(mod),
+                ),
+            ],
+        )
+        self.page.show_dialog(confirm)
+
+    def _confirm_remove(self, mod: "ModInfo") -> None:
+        self.page.pop_dialog()
+
+        success = self.mod_manager.remove_mod(mod.name)
+        if success:
+            self._refresh()
+        else:
+            error = ft.AlertDialog(
+                title=ft.Text("error"),
+                content=ft.Text("failed to remove mod"),
+                actions=[
+                    ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog()),
+                ],
+            )
+            self.page.show_dialog(error)
+
+    def _add_mod(self, e) -> None:
+        pass
+
+    def _refresh(self) -> None:
+        self.mod_manager._load_mods()
+        self._populate_mods()
+        self.page.update()
+
+    def _close(self) -> None:
+        self.page.pop_dialog()
+        self.on_save()

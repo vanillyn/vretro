@@ -1,13 +1,58 @@
+import platform
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 try:
     import tomli as tomllib
 except ImportError:
     import tomllib
 
-from ..data.config import get_config_dir
+
+@dataclass
+class OSInstallInfo:
+    url: str
+    binary_path: str
+    install_type: str
+    extract_command: Optional[str] = None
+    post_install: List[str] = field(default_factory=list)
+
+
+@dataclass
+class EmulatorInfo:
+    name: str
+    binary: str
+    url: str
+    requires_bios: bool = False
+    bios_files: List[str] = field(default_factory=list)
+    launch_command: str = "{binary} {rom}"
+    os_specific: Dict[str, OSInstallInfo] = field(default_factory=dict)
+
+    def get_install_info(self) -> Optional[OSInstallInfo]:
+        system = platform.system().lower()
+
+        if system in self.os_specific:
+            return self.os_specific[system]
+
+        if "linux" in self.os_specific and system == "linux":
+            return self.os_specific["linux"]
+        elif "windows" in self.os_specific and system == "windows":
+            return self.os_specific["windows"]
+        elif "darwin" in self.os_specific and system == "darwin":
+            return self.os_specific["darwin"]
+
+        return None
+
+
+@dataclass
+class ConsoleInfo:
+    code: str
+    name: str
+    release: str
+    manufacturer: str
+    formats: List[str]
+    generation: Optional[int] = None
+    aliases: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -22,7 +67,11 @@ class GameSource:
             return None
 
         scheme, identifier = uri.split("://", 1)
-        return cls(scheme=scheme.lower(), identifier=identifier, original_uri=uri)
+        return cls(
+            scheme=scheme.lower(),
+            identifier=identifier,
+            original_uri=uri,
+        )
 
     def get_download_url(self) -> str:
         if self.scheme == "arv":
@@ -32,26 +81,6 @@ class GameSource:
         elif self.scheme in ["http", "https"]:
             return self.original_uri
         return ""
-
-
-@dataclass
-class EmulatorInfo:
-    name: str
-    binary: str
-    url: str
-    requires_bios: bool = False
-    bios_files: List[str] = field(default_factory=list)
-    launch_command: str = "{binary} {rom}"
-
-
-@dataclass
-class ConsoleInfo:
-    code: str
-    name: str
-    release: str
-    manufacturer: str
-    formats: List[str]
-    generation: Optional[int] = None
 
 
 @dataclass
@@ -70,6 +99,18 @@ class VRDBConsole:
                 return None
 
             emulator_data = data.get("Emulator", {})
+
+            os_specific = {}
+            if "OSSpecific" in emulator_data:
+                for os_name, os_data in emulator_data["OSSpecific"].items():
+                    os_specific[os_name.lower()] = OSInstallInfo(
+                        url=os_data.get("URL", ""),
+                        binary_path=os_data.get("BinaryPath", ""),
+                        install_type=os_data.get("InstallType", "extract"),
+                        extract_command=os_data.get("ExtractCommand"),
+                        post_install=os_data.get("PostInstall", []),
+                    )
+
             emulator = EmulatorInfo(
                 name=emulator_data.get("Name", ""),
                 binary=emulator_data.get("Binary", ""),
@@ -77,6 +118,7 @@ class VRDBConsole:
                 requires_bios=emulator_data.get("RequiresBios", False),
                 bios_files=emulator_data.get("BiosFiles", []),
                 launch_command=emulator_data.get("LaunchCommand", "{binary} {rom}"),
+                os_specific=os_specific,
             )
 
             console_data = data.get("Console", {})
@@ -87,6 +129,7 @@ class VRDBConsole:
                 manufacturer=console_data.get("Manufacturer", ""),
                 formats=console_data.get("Formats", []),
                 generation=console_data.get("Generation"),
+                aliases=console_data.get("Aliases", []),
             )
 
             games = {}
@@ -97,14 +140,19 @@ class VRDBConsole:
                     if source:
                         games[game_name] = source
 
-            return cls(emulator=emulator, console=console, games=games)
-
+            return cls(
+                emulator=emulator,
+                console=console,
+                games=games,
+            )
         except Exception:
             return None
 
 
 class VRDBDatabase:
     def __init__(self, db_dir: Optional[Path] = None):
+        from src.data.config import get_config_dir
+
         if db_dir is None:
             db_dir = get_config_dir() / "db"
 
@@ -114,7 +162,7 @@ class VRDBDatabase:
 
         self._load_database()
 
-    def _load_database(self):
+    def _load_database(self) -> None:
         if not self.db_dir.exists():
             self.db_dir.mkdir(parents=True, exist_ok=True)
             return
@@ -139,20 +187,31 @@ class VRDBDatabase:
                 self.consoles[console.console.code] = console
 
     def get_console(self, code: str) -> Optional[VRDBConsole]:
-        return self.consoles.get(code.upper())
+        code_upper = code.upper()
+
+        if code_upper in self.consoles:
+            return self.consoles[code_upper]
+
+        for console in self.consoles.values():
+            if code.lower() in [alias.lower() for alias in console.console.aliases]:
+                return console
+
+        return None
 
     def get_console_by_name(self, name: str) -> Optional[VRDBConsole]:
         for console in self.consoles.values():
-            if console.console.name == name:
+            if console.console.name.lower() == name.lower():
                 return console
         return None
 
     def list_consoles(self) -> List[str]:
-        return list(self.consoles.keys())
+        return sorted(list(self.consoles.keys()))
 
     def search_games(
-        self, console_code: str, query: str
-    ) -> List[Tuple[str, GameSource]]:
+        self,
+        console_code: str,
+        query: str,
+    ) -> List[tuple[str, GameSource]]:
         console = self.get_console(console_code)
         if not console:
             return []
@@ -166,7 +225,11 @@ class VRDBDatabase:
 
         return results
 
-    def get_game(self, console_code: str, game_name: str) -> Optional[GameSource]:
+    def get_game(
+        self,
+        console_code: str,
+        game_name: str,
+    ) -> Optional[GameSource]:
         console = self.get_console(console_code)
         if not console:
             return None

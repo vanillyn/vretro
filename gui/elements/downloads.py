@@ -59,7 +59,7 @@ class DownloadsPanel:
 
         downloads_container = ft.Container(
             content=self.downloads_list,
-            padding=ft.padding.only(top=10),
+            padding=ft.Padding.only(top=10),
             visible=True,
         )
 
@@ -72,7 +72,7 @@ class DownloadsPanel:
                 spacing=5,
             ),
             padding=15,
-            border=ft.border.only(top=ft.BorderSide(1, ft.Colors.OUTLINE)),
+            border=ft.Border.only(top=ft.BorderSide(1, ft.Colors.OUTLINE)),
             visible=False,
         )
 

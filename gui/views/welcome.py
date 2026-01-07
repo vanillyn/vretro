@@ -1,9 +1,11 @@
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional
 
 import flet as ft
 
 if TYPE_CHECKING:
     from gui.app import VRetroApp
+from gui.elements.card import ConsoleCard
 
 
 class WelcomeView:
@@ -44,7 +46,7 @@ class WelcomeView:
                 ),
                 ft.Container(
                     content=self.console_grid,
-                    padding=ft.padding.only(left=40, right=40, bottom=40),
+                    padding=ft.Padding.only(left=40, right=40, bottom=40),
                     expand=True,
                 ),
             ],
@@ -64,44 +66,14 @@ class WelcomeView:
             games = [
                 g for g in self.app.library.games if g.metadata.console == console_code
             ]
-            name = console_meta.name if console_meta else console_code
 
-            icon_widget = self._get_console_icon(console_meta)
-
-            card = ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Container(content=icon_widget, expand=True),
-                        ft.Container(
-                            content=ft.Column(
-                                [
-                                    ft.Text(
-                                        name,
-                                        size=14,
-                                        weight=ft.FontWeight.W_500,
-                                        text_align=ft.TextAlign.CENTER,
-                                        max_lines=1,
-                                        overflow=ft.TextOverflow.ELLIPSIS,
-                                    ),
-                                    ft.Text(
-                                        f"{len(games)} {'game' if len(games) == 1 else 'games'}",
-                                        size=12,
-                                        color=ft.Colors.ON_SURFACE_VARIANT,
-                                        text_align=ft.TextAlign.CENTER,
-                                    ),
-                                ],
-                                spacing=2,
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                            ),
-                            padding=10,
-                        ),
-                    ],
-                    spacing=0,
-                ),
-                border_radius=12,
-                ink=True,
-                on_click=lambda _, c=console_code: self.app.show_console(c),
-            )
+            card = ConsoleCard(
+                console_code,
+                console_meta,
+                len(games),
+                lambda _: self.app.show_console(console_code),
+                self._get_console_path(console_meta),
+            ).create()
             self.console_grid.controls.append(card)
 
         add_btn = ft.Container(
@@ -134,37 +106,17 @@ class WelcomeView:
         )
         self.console_grid.controls.append(add_btn)
 
-    def _get_console_icon(self, console_meta) -> ft.Control:
+    def _get_console_path(self, console_meta) -> Optional[Path]:
         if not console_meta:
-            return ft.Container(
-                content=ft.Icon(ft.Icons.VIDEOGAME_ASSET, size=64),
-                alignment=ft.Alignment.CENTER,
-            )
+            return None
 
         console_dir = self.app.library.console_root / console_meta.name
         icon_path = console_dir / "graphics" / "icon.png"
         logo_path = console_dir / "graphics" / "logo.png"
 
         if icon_path.exists():
-            return ft.Container(
-                content=ft.Image(
-                    src=str(icon_path),
-                    fit=ft.BoxFit.CONTAIN,
-                ),
-                alignment=ft.Alignment.CENTER,
-                padding=20,
-            )
+            return icon_path
         elif logo_path.exists():
-            return ft.Container(
-                content=ft.Image(
-                    src=str(logo_path),
-                    fit=ft.BoxFit.CONTAIN,
-                ),
-                alignment=ft.Alignment.CENTER,
-                padding=20,
-            )
+            return logo_path
 
-        return ft.Container(
-            content=ft.Icon(ft.Icons.VIDEOGAME_ASSET, size=64),
-            alignment=ft.Alignment.CENTER,
-        )
+        return None

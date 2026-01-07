@@ -261,11 +261,11 @@ class GameView:
                             size=18,
                             weight=ft.FontWeight.W_500,
                         ),
-                        padding=ft.padding.only(left=40, right=40, bottom=10),
+                        padding=ft.Padding.only(left=40, right=40, bottom=10),
                     ),
                     ft.Container(
                         content=screenshot_list,
-                        padding=ft.padding.only(left=40, right=40),
+                        padding=ft.Padding.only(left=40, right=40),
                     ),
                 ]
             )
@@ -297,7 +297,7 @@ class GameView:
                         spacing=8,
                         wrap=True,
                     ),
-                    padding=ft.padding.only(bottom=15),
+                    padding=ft.Padding.only(bottom=15),
                 )
             )
 
@@ -315,7 +315,7 @@ class GameView:
 
         return ft.Container(
             content=ft.Column(content, spacing=10),
-            padding=ft.padding.only(left=40, right=40),
+            padding=ft.Padding.only(left=40, right=40),
         )
 
     def _create_details_section(self) -> ft.Container:
@@ -375,7 +375,7 @@ class GameView:
                 spacing=15,
             ),
             visible=True,
-            padding=ft.padding.only(top=10),
+            padding=ft.Padding.only(top=10),
         )
 
         return ft.Container(
@@ -403,7 +403,7 @@ class GameView:
                     self.details_content,
                 ]
             ),
-            padding=ft.padding.only(left=40, right=40, bottom=40),
+            padding=ft.Padding.only(left=40, right=40, bottom=40),
         )
 
     def _detail_item(self, label: str, value: str) -> ft.Container:
@@ -426,7 +426,7 @@ class GameView:
                 ],
                 spacing=20,
             ),
-            padding=ft.padding.only(left=10),
+            padding=ft.Padding.only(left=10),
         )
 
     def _toggle_details(self) -> None:

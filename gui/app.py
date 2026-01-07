@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,7 @@ class VRetroApp:
         self.page = page
         self.page.title = "vretro"
         self.page.padding = 0
+        self.page.window.icon = "gui/assets/logo.png"
 
         config_path = get_config_path()
         if not config_path.exists():

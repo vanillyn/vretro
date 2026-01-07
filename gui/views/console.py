@@ -6,6 +6,7 @@ import flet as ft
 
 if TYPE_CHECKING:
     from gui.app import VRetroApp
+from gui.elements.card import GameCard
 
 
 class ConsoleView:
@@ -41,12 +42,12 @@ class ConsoleView:
                 header,
                 ft.Container(height=20),
                 ft.Container(
-                    content=search_bar, padding=ft.padding.only(left=30, right=30)
+                    content=search_bar, padding=ft.Padding.only(left=30, right=30)
                 ),
                 ft.Container(height=10),
                 ft.Container(
                     content=self.game_grid,
-                    padding=ft.padding.only(left=30, right=30, bottom=30),
+                    padding=ft.Padding.only(left=30, right=30, bottom=30),
                     expand=True,
                 ),
             ],
@@ -219,7 +220,7 @@ class ConsoleView:
         self.game_grid.controls.clear()
 
         for game in self.filtered_games:
-            card = self._create_game_card(game)
+            card = GameCard(game, lambda _, g=game: self.app.show_game(g)).create()
             self.game_grid.controls.append(card)
 
         has_sources = self._check_sources_available()
@@ -276,55 +277,6 @@ class ConsoleView:
                 padding=15,
             )
             self.game_grid.controls.append(warning)
-
-    def _create_game_card(self, game) -> ft.Container:
-        graphics_dir = game.path / "graphics"
-        grid_path = graphics_dir / "grid.png"
-
-        if not grid_path.exists():
-            assets_dir = game.path / "assets"
-            grid_path = assets_dir / "grid.png"
-
-        if grid_path.exists():
-            image = ft.Image(src=str(grid_path), fit=ft.BoxFit.COVER, border_radius=8)
-            show_title = False
-        else:
-            thumb_path = game.get_thumbnail_path()
-            if thumb_path and thumb_path.exists():
-                image = ft.Image(
-                    src=str(thumb_path), fit=ft.BoxFit.COVER, border_radius=8
-                )
-                show_title = True
-            else:
-                image = ft.Container(
-                    content=ft.Icon(ft.Icons.VIDEOGAME_ASSET, size=48),
-                    bgcolor=ft.Colors.SURFACE_CONTAINER,
-                    border_radius=8,
-                    alignment=ft.Alignment.CENTER,
-                )
-                show_title = True
-
-        controls = [ft.Container(content=image, expand=True)]
-
-        if show_title:
-            controls.append(
-                ft.Container(
-                    content=ft.Text(
-                        game.metadata.get_title(),
-                        size=14,
-                        max_lines=2,
-                        overflow=ft.TextOverflow.ELLIPSIS,
-                    ),
-                    padding=10,
-                )
-            )
-
-        return ft.Container(
-            content=ft.Column(controls, spacing=0),
-            border_radius=12,
-            ink=True,
-            on_click=lambda _, g=game: self.app.show_game(g),
-        )
 
     def _check_sources_available(self) -> bool:
         console_code = self.app.current_console.upper()
