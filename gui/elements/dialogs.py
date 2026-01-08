@@ -1,7 +1,5 @@
-import re
 import sys
 import threading
-import zipfile
 from pathlib import Path
 from typing import Callable, Set
 
@@ -12,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from gui.util.downloads import DownloadManager
 from src.data.config import VRetroConfig
 from src.data.console import get_console_metadata
-from src.data.library import CONSOLE_EXTENSIONS, GameMetadata
+from src.data.library import GameMetadata
 from src.util.download import download_emulator
 from src.util.mods import ModInfo, ModManager
 
@@ -1539,6 +1537,7 @@ class ModManagerDialog:
         self.page = page
         self.mod_manager = mod_manager
         self.on_save = on_save
+        self.file_picker = None
 
     def create(self) -> ft.AlertDialog:
         self.mod_list = ft.Column(
@@ -1706,13 +1705,13 @@ class ModManagerDialog:
                 ],
                 spacing=0,
             ),
-            border=ft.border.all(
+            border=ft.Border.all(
                 2 if mod.enabled else 1,
                 ft.Colors.PRIMARY if mod.enabled else ft.Colors.OUTLINE,
             ),
             border_radius=12,
             padding=15,
-            animate=ft.animation.Animation(300, ft.AnimationCurve.EASE_OUT),
+            animate=ft.Animation(300, ft.AnimationCurve.EASE_OUT),
         )
 
     def _toggle_mod(self, mod: "ModInfo", enabled: bool) -> None:
@@ -1758,8 +1757,60 @@ class ModManagerDialog:
             )
             self.page.show_dialog(error)
 
-    def _add_mod(self, e) -> None:
-        pass
+    async def _add_mod(self, e) -> None:
+        path = await ft.FilePicker().get_directory_path(
+            dialog_title="select mod file or directory",
+        )
+        if not path:
+            return
+
+        name_input = ft.TextField(
+            label="mod name",
+            value=Path(path).stem,
+        )
+
+        name_dialog = ft.AlertDialog(
+            title=ft.Text("add mod"),
+            content=name_input,
+            actions=[
+                ft.TextButton("cancel", on_click=lambda _: self.page.pop_dialog()),
+                ft.FilledButton(
+                    "add",
+                    on_click=lambda _: self._confirm_add_mod(
+                        Path(path),
+                        name_input.value,
+                    ),
+                ),
+            ],
+        )
+
+        self.page.show_dialog(name_dialog)
+        self.page.update()
+
+    def _confirm_add_mod(self, source_path, name: str) -> None:
+        self.page.pop_dialog()
+
+        success = self.mod_manager.add_mod(source_path, name or None)
+
+        if success:
+            self._refresh()
+            info = ft.AlertDialog(
+                title=ft.Text("success"),
+                content=ft.Text(f"added mod: {name or source_path.stem}"),
+                actions=[
+                    ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog()),
+                ],
+            )
+            self.page.show_dialog(info)
+        else:
+            error = ft.AlertDialog(
+                title=ft.Text("error"),
+                content=ft.Text("failed to add mod"),
+                actions=[
+                    ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog()),
+                ],
+            )
+            self.page.show_dialog(error)
 
     def _refresh(self) -> None:
         self.mod_manager._load_mods()
@@ -1767,5 +1818,7 @@ class ModManagerDialog:
         self.page.update()
 
     def _close(self) -> None:
+        if self.file_picker and self.file_picker in self.page.overlay:
+            self.page.overlay.remove(self.file_picker)
         self.page.pop_dialog()
         self.on_save()

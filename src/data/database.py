@@ -209,12 +209,18 @@ class OnlineDatabase:
 
         return None
 
+    def get_platform_id(self, platform_code: str) -> Optional[int]:
+        from ..util.vrdb import get_vrdb
+
+        vrdb = get_vrdb()
+        return vrdb.get_platform_id(platform_code.upper())
+
     def search_games(
         self, query: str, platform: Optional[str] = None
     ) -> List[OnlineGame]:
         platform_filter = ""
         if platform:
-            platform_id = PLATFORM_MAPPING.get(platform.upper())
+            platform_id = get_platform_id(platform)
             if platform_id:
                 platform_filter = f" & platforms = [{platform_id}]"
 

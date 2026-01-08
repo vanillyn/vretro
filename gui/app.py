@@ -33,6 +33,7 @@ class VRetroApp:
         self.page.title = "vretro"
         self.page.padding = 0
         self.page.window.icon = "gui/assets/logo.png"
+        # self.page.show_semantics_debugger = True
 
         config_path = get_config_path()
         if not config_path.exists():

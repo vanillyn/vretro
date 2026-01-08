@@ -86,27 +86,15 @@ class GameEntry:
         return None
 
 
-CONSOLE_EXTENSIONS: Dict[str, str] = {
-    "SFC": "sfc",
-    "SNES": "sfc",
-    "NES": "nes",
-    "GB": "gb",
-    "GBC": "gbc",
-    "GBA": "gba",
-    "N64": "z64",
-    "GC": "iso",
-    "WII": "iso",
-    "DS": "nds",
-    "3DS": "3ds",
-    "SWITCH": "nsp",
-    "PS1": "bin",
-    "PS2": "iso",
-    "PSP": "iso",
-    "GENESIS": "bin",
-    "SMS": "sms",
-    "GG": "gg",
-    "ARCADE": "zip",
-}
+def get_console_extension(console_code: str) -> str:
+    from ..util.vrdb import get_vrdb
+
+    vrdb = get_vrdb()
+    extension = vrdb.get_extension(console_code)
+    return extension if extension else "bin"
+
+
+CONSOLE_EXTENSIONS: Dict[str, str] = {}
 
 
 class GameLibrary:
@@ -279,7 +267,8 @@ class GameLibrary:
         metadata.save(game_dir / "metadata.json")
 
         resources_dir = game_dir / "resources"
-        rom_path = resources_dir / f"base.{CONSOLE_EXTENSIONS.get(console, 'bin')}"
+        extension = get_console_extension(console)
+        rom_path = resources_dir / f"base.{extension}"
 
         entry = GameEntry(
             metadata=metadata,

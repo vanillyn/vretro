@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from uuid import uuid4
 
-from src.data.library import CONSOLE_EXTENSIONS, GameMetadata
+from src.data.library import GameMetadata, get_console_extension
 
 
 class DownloadStatus(Enum):
@@ -181,7 +181,7 @@ class DownloadManager:
             (game_dir / "graphics").mkdir(exist_ok=True)
 
             download_dir = game_dir / "resources"
-            extension = CONSOLE_EXTENSIONS.get(console_code_upper, "bin")
+            extension = get_console_extension(console_code_upper)
             dest_file = download_dir / f"base.{extension}"
 
             self._update_task(task, DownloadStatus.DOWNLOADING, 0.2)

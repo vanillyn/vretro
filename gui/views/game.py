@@ -1,4 +1,5 @@
 import subprocess
+import threading
 from typing import TYPE_CHECKING
 
 import flet as ft
@@ -6,7 +7,13 @@ import flet as ft
 if TYPE_CHECKING:
     from gui.app import VRetroApp
 
+from src.util.compression import (
+    compress_game_directory,
+    decompress_game_directory,
+    is_compressed,
+)
 from src.util.launch import launch_game
+from src.util.mods import ModManager
 
 
 class GameView:
@@ -16,6 +23,7 @@ class GameView:
         self.show_details = True
         self.game_details = None
         self.is_playing = False
+        self.mod_manager = ModManager(game.path)
 
     def create(self) -> ft.Container:
         graphics_dir = self.game.path / "graphics"
@@ -33,6 +41,7 @@ class GameView:
         hero_section = self._create_hero(hero_path, logo_path)
         launch_section = self._create_launch_section()
         description_section = self._create_description_section()
+        settings_section = self._create_quick_settings_row()
         screenshots_section = self._create_screenshots_section()
         details_section = self._create_details_section()
 
@@ -44,6 +53,7 @@ class GameView:
                         [
                             launch_section,
                             description_section,
+                            settings_section,
                             screenshots_section,
                             details_section,
                         ],
@@ -160,7 +170,7 @@ class GameView:
         self.launch_button = ft.FilledButton(
             "launch",
             icon=ft.Icons.PLAY_ARROW,
-            on_click=lambda _: self._launch(),
+            on_click=lambda _: threading.Thread(target=self._launch).start(),
             height=70,
             style=ft.ButtonStyle(
                 text_style=ft.TextStyle(size=24, weight=ft.FontWeight.BOLD),
@@ -195,12 +205,16 @@ class GameView:
                 ft.PopupMenuItem(
                     "launch in fullscreen",
                     icon=ft.Icons.FULLSCREEN,
-                    on_click=lambda _: self._launch(fullscreen=True),
+                    on_click=lambda _: threading.Thread(
+                        target=self._launch, kwargs={"fullscreen": True}, daemon=True
+                    ).start(),
                 ),
                 ft.PopupMenuItem(
-                    "launch without custom variables",
+                    "debug launch",
                     icon=ft.Icons.PLAY_ARROW,
-                    on_click=lambda _: self._launch(debug=True),
+                    on_click=lambda _: threading.Thread(
+                        target=self._launch, kwargs={"debug": True}, daemon=True
+                    ).start(),
                 ),
             ],
         )
@@ -226,6 +240,193 @@ class GameView:
                 alignment=ft.MainAxisAlignment.START,
             ),
             padding=40,
+        )
+
+    def _create_compression_section(self) -> ft.Container:
+        resources_dir = self.game.path / "resources"
+        if not resources_dir.exists():
+            return ft.Container()
+
+        base_files = list(resources_dir.glob("base.*"))
+        if not base_files:
+            return ft.Container()
+
+        compressed = any(is_compressed(f) for f in base_files)
+
+        status_icon = ft.Icon(
+            ft.Icons.FOLDER_ZIP if compressed else ft.Icons.FOLDER_OPEN,
+            color=ft.Colors.PRIMARY if compressed else ft.Colors.ON_SURFACE_VARIANT,
+            size=20,
+        )
+
+        status_text = ft.Text(
+            "compressed" if compressed else "uncompressed",
+            size=14,
+            color=ft.Colors.PRIMARY if compressed else ft.Colors.ON_SURFACE_VARIANT,
+        )
+
+        action_button = ft.OutlinedButton(
+            "decompress" if compressed else "compress",
+            icon=ft.Icons.UNFOLD_MORE if compressed else ft.Icons.COMPRESS,
+            on_click=lambda _: self._toggle_compression(compressed),
+        )
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            status_icon,
+                            ft.Text("storage", size=18, weight=ft.FontWeight.W_500),
+                        ],
+                        spacing=10,
+                    ),
+                    ft.Row(
+                        [
+                            status_text,
+                            ft.Container(expand=True),
+                            action_button,
+                        ],
+                        spacing=10,
+                    ),
+                ],
+                spacing=10,
+            ),
+            padding=0,
+        )
+
+    def _create_mods_section(self) -> ft.Container:
+        mods_dir = self.game.path / "mods"
+        if not mods_dir.exists() or not any(mods_dir.iterdir()):
+            return ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Icon(ft.Icons.EXTENSION, size=20),
+                                ft.Text("mods", size=18, weight=ft.FontWeight.W_500),
+                            ],
+                            spacing=10,
+                        ),
+                        ft.Row(
+                            [
+                                ft.Text(
+                                    "no mods installed",
+                                    size=14,
+                                    color=ft.Colors.ON_SURFACE_VARIANT,
+                                ),
+                                ft.Container(expand=True),
+                                ft.OutlinedButton(
+                                    "manage mods",
+                                    icon=ft.Icons.SETTINGS,
+                                    on_click=lambda _: self._open_mod_manager(),
+                                ),
+                            ],
+                            spacing=10,
+                        ),
+                    ],
+                    spacing=10,
+                ),
+                padding=ft.Padding.only(left=40, right=40),
+            )
+
+        enabled_mods = [m for m in self.mod_manager.mods if m.enabled]
+        total_mods = len(self.mod_manager.mods)
+
+        mod_chips = []
+        for mod in enabled_mods[:3]:
+            mod_chips.append(
+                ft.Container(
+                    content=ft.Text(
+                        mod.name,
+                        size=12,
+                        weight=ft.FontWeight.W_400,
+                    ),
+                    padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+                    bgcolor=ft.Colors.PRIMARY_CONTAINER,
+                    border_radius=16,
+                )
+            )
+
+        if len(enabled_mods) > 3:
+            mod_chips.append(
+                ft.Container(
+                    content=ft.Text(
+                        f"+{len(enabled_mods) - 3} more",
+                        size=12,
+                        weight=ft.FontWeight.W_400,
+                    ),
+                    padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                    border_radius=16,
+                )
+            )
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Icon(
+                                ft.Icons.EXTENSION,
+                                size=20,
+                                color=ft.Colors.PRIMARY if enabled_mods else None,
+                            ),
+                            ft.Text("mods", size=18, weight=ft.FontWeight.W_500),
+                        ],
+                        spacing=10,
+                    ),
+                    ft.Row(
+                        [
+                            ft.Text(
+                                f"{len(enabled_mods)}/{total_mods} enabled",
+                                size=14,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                            ft.Container(expand=True),
+                            ft.OutlinedButton(
+                                "manage mods",
+                                icon=ft.Icons.SETTINGS,
+                                on_click=lambda _: self._open_mod_manager(),
+                            ),
+                        ],
+                        spacing=10,
+                    ),
+                    ft.Container(
+                        content=ft.Row(
+                            mod_chips,
+                            spacing=8,
+                            wrap=True,
+                        ),
+                        padding=ft.Padding.only(top=10),
+                    )
+                    if mod_chips
+                    else ft.Container(),
+                ],
+                spacing=10,
+            ),
+            padding=0,
+        )
+
+    def _create_quick_settings_row(self) -> ft.Control:
+        compression_section = self._create_compression_section()
+        mods_section = self._create_mods_section()
+
+        compression_section.expand = True
+        mods_section.expand = True
+
+        return ft.Container(
+            content=ft.Row(
+                controls=[
+                    compression_section,
+                    ft.VerticalDivider(width=1, color=ft.Colors.OUTLINE_VARIANT),
+                    mods_section,
+                ],
+                spacing=20,
+                alignment=ft.MainAxisAlignment.START,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+            padding=ft.Padding.symmetric(horizontal=40, vertical=10),
         )
 
     def _create_screenshots_section(self) -> ft.Container:
@@ -288,7 +489,7 @@ class GameView:
                                     size=12,
                                     weight=ft.FontWeight.W_400,
                                 ),
-                                padding=ft.padding.symmetric(horizontal=12, vertical=6),
+                                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                                 border_radius=16,
                             )
@@ -434,6 +635,55 @@ class GameView:
         self.details_content.visible = self.show_details
         self.app.page.update()
 
+    def _toggle_compression(self, is_compressed: bool) -> None:
+        progress = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("processing"),
+            content=ft.Column(
+                [
+                    ft.ProgressRing(),
+                    ft.Text(
+                        "decompressing..." if is_compressed else "compressing...",
+                        size=14,
+                    ),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=20,
+            ),
+        )
+
+        self.app.page.show_dialog(progress)
+
+        import threading
+
+        def process():
+            if is_compressed:
+                success = decompress_game_directory(self.game.path, verbose=False)
+                action = "decompression"
+            else:
+                success = compress_game_directory(
+                    self.game.path, "7z", 9, verbose=False
+                )
+                action = "compression"
+
+            self.app.page.pop_dialog()
+
+            if success:
+                self._show_info("success", f"{action} complete")
+                self.app.show_game(self.game)
+            else:
+                self._show_error("error", f"{action} failed")
+
+        threading.Thread(target=process, daemon=True).start()
+
+    def _open_mod_manager(self) -> None:
+        from ..elements.dialogs import ModManagerDialog
+
+        dialog = ModManagerDialog(
+            self.app.page, self.mod_manager, lambda: self.app.show_game(self.game)
+        )
+        self.app.page.show_dialog(dialog.create())
+
     def _load_game_details(self) -> None:
         if self.game.metadata.id > 0:
             details = self.app.db.get_game_details(self.game.metadata.id)
@@ -445,14 +695,14 @@ class GameView:
 
         webbrowser.open(url)
 
-    def _launch(self, fullscreen: bool = None, debug: bool = False) -> None:
+    def _launch(self, fullscreen: bool = False, debug: bool = False) -> None:
         if self.is_playing:
             return
 
         self.is_playing = True
-        self.launch_button.text = "playing"
+        self.launch_button.content = "playing"
         self.launch_button.icon = ft.Icons.STOP
-        self.launch_button.disabled = False
+        self.launch_button.disabled = True
         self.app.page.update()
 
         success = launch_game(
@@ -465,8 +715,9 @@ class GameView:
         )
 
         self.is_playing = False
-        self.launch_button.text = "launch"
+        self.launch_button.content = "launch"
         self.launch_button.icon = ft.Icons.PLAY_ARROW
+        self.launch_button.disabled = False
 
         if success:
             self.app.library.scan(verbose=False)

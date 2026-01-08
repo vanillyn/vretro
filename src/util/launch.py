@@ -1,5 +1,7 @@
 import os
 import platform
+import shlex
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -81,6 +83,50 @@ def cleanup_temp(game: GameEntry):
         shutil.rmtree(temp_dir)
 
 
+def apply_mods(game: GameEntry, verbose: bool = False) -> bool:
+    from .mods import ModManager
+
+    mod_manager = ModManager(game.path)
+    enabled_mods = [m for m in mod_manager.mods if m.enabled]
+
+    if not enabled_mods:
+        return True
+
+    if verbose:
+        term.print(f"[cyan]applying {len(enabled_mods)} mods...[/cyan]")
+
+    for mod in enabled_mods:
+        mod_dir = game.path / "mods" / mod.name
+        if not mod_dir.exists():
+            if verbose:
+                term.print(f"[yellow]mod not found: {mod.name}[/yellow]")
+            continue
+
+        if mod.install_path:
+            install_path = Path(mod.install_path).expanduser() / mod.name
+        else:
+            install_path = game.path / "active_mods" / mod.name
+
+        install_path.mkdir(parents=True, exist_ok=True)
+
+        if verbose:
+            term.print(f"[dim]copying {mod.name} to {install_path}[/dim]")
+
+        try:
+            if install_path.exists():
+                shutil.rmtree(install_path)
+
+            shutil.copytree(
+                mod_dir, install_path, ignore=shutil.ignore_patterns("mod.json")
+            )
+        except Exception as e:
+            if verbose:
+                term.print(f"[red]failed to copy {mod.name}: {e}[/red]")
+            return False
+
+    return True
+
+
 def build_launch_command(
     game: GameEntry,
     library: GameLibrary,
@@ -94,125 +140,30 @@ def build_launch_command(
     if not console_meta:
         return []
 
-    emulator_dir = game.path.parent.parent / "emulator"
+    launch_template = console_meta.emulator.launch_command
 
-    if "mupen64plus" in binary_name.lower():
-        return _build_mupen64plus_command(
-            emulator_binary, emulator_dir, game, rom_path, use_fullscreen, debug
-        )
+    launch_cmd = launch_template.replace("{binary}", f'"{emulator_binary}"')
+    launch_cmd = launch_cmd.replace("{rom}", f'"{rom_path}"')
 
-    elif "yuzu" in binary_name.lower() or "eden" in binary_name.lower():
-        return _build_yuzu_command(
-            emulator_binary, emulator_dir, game, rom_path, use_fullscreen
-        )
-
-    else:
-        return _build_generic_command(
-            console_meta.emulator.launch_command,
-            emulator_binary,
-            rom_path,
-            use_fullscreen,
-        )
-
-
-def _build_mupen64plus_command(
-    binary: Path,
-    emulator_dir: Path,
-    game: GameEntry,
-    rom_path: Path,
-    fullscreen: bool,
-    debug: bool,
-) -> list[str]:
-    portable_config = emulator_dir.parent / "config"
-    portable_config.mkdir(exist_ok=True)
-
-    cmd = [str(binary)]
-
-    if fullscreen:
-        cmd.append("--fullscreen")
-
-    if debug:
-        cmd.extend(["--debug", "--emumode", "0"])
-
-    cmd.extend(["--configdir", str(portable_config)])
-
-    if game.metadata.has_dlc or game.metadata.has_updates:
-        dlc_dir = game.resources_path / "dlc"
-        if dlc_dir.exists():
-            cmd.extend(["--plugindir", str(dlc_dir)])
-
-    cmd.append(str(rom_path))
-    return cmd
-
-
-def _build_yuzu_command(
-    binary: Path,
-    emulator_dir: Path,
-    game: GameEntry,
-    rom_path: Path,
-    fullscreen: bool = True,
-) -> list[str]:
-    portable_dir = emulator_dir.parent / "portable"
-    portable_dir.mkdir(exist_ok=True)
-
-    keys_dir = portable_dir / "keys"
-    keys_dir.mkdir(exist_ok=True)
-
-    resources_dir = emulator_dir.parent / "resources"
-
-    if resources_dir.exists():
-        prod_keys = resources_dir / "prod.keys"
-        if prod_keys.exists():
-            import shutil
-
-            shutil.copy2(prod_keys, keys_dir / "prod.keys")
-
-        firmware_zip = resources_dir / "firmware.zip"
-        if firmware_zip.exists():
-            firmware_dir = portable_dir / "nand" / "system" / "Contents" / "registered"
-            firmware_dir.mkdir(parents=True, exist_ok=True)
-
-            import zipfile
-
-            with zipfile.ZipFile(firmware_zip, "r") as zip_ref:
-                zip_ref.extractall(firmware_dir)
-
-    cmd = [str(binary), "-u", str(portable_dir)]
-
-    if fullscreen:
-        cmd.append("-f")
-
-    cmd.extend(["-g", str(rom_path)])
-
-    dlc_dir = game.resources_path / "dlc"
-    updates_dir = game.resources_path / "updates"
-
-    if dlc_dir.exists():
-        for dlc_file in dlc_dir.glob("*.nsp"):
-            cmd.extend(["--installnsp", str(dlc_file)])
-
-    if updates_dir.exists():
-        for update_file in updates_dir.glob("*.nsp"):
-            cmd.extend(["--installnsp", str(update_file)])
-
-    return cmd
-
-
-def _build_generic_command(
-    launch_template: str,
-    binary: Path,
-    rom_path: Path,
-    fullscreen: bool,
-) -> list[str]:
-    launch_cmd = launch_template.replace("{binary}", str(binary))
-    launch_cmd = launch_cmd.replace("{rom}", str(rom_path))
-
-    if fullscreen and "{fullscreen}" in launch_cmd:
+    if use_fullscreen and "{fullscreen}" in launch_cmd:
         launch_cmd = launch_cmd.replace("{fullscreen}", "--fullscreen")
     elif "{fullscreen}" in launch_cmd:
         launch_cmd = launch_cmd.replace("{fullscreen}", "")
 
-    return launch_cmd.split()
+    if "{saves}" in launch_cmd:
+        launch_cmd = launch_cmd.replace("{saves}", f'"{game.saves_path}"')
+
+    if "{config}" in launch_cmd:
+        config_dir = game.path.parent.parent / "config"
+        config_dir.mkdir(exist_ok=True)
+        launch_cmd = launch_cmd.replace("{config}", f'"{config_dir}"')
+
+    if "{portable}" in launch_cmd:
+        portable_dir = game.path.parent.parent / "portable"
+        portable_dir.mkdir(exist_ok=True)
+        launch_cmd = launch_cmd.replace("{portable}", f'"{portable_dir}"')
+
+    return shlex.split(launch_cmd)
 
 
 def launch_game(
@@ -243,6 +194,9 @@ def launch_game(
         return False
 
     setup_library_path(emulator_dir, binary_name)
+
+    if not apply_mods(game, verbose):
+        term.print("[yellow]warning: failed to apply some mods[/yellow]")
 
     rom_path = prepare_rom(game, verbose)
     if not rom_path:
@@ -277,7 +231,7 @@ def launch_game(
         ] + cmd
 
     if game.metadata.custom_args:
-        cmd.extend(game.metadata.custom_args)
+        cmd.extend(game.metadata.custom_args.split())
 
     if extra_args:
         cmd.extend(extra_args)
@@ -305,7 +259,7 @@ def launch_game(
         term.print(f"[red]launch failed: {e}[/red]")
         cleanup_temp(game)
         return False
-    except FileNotFoundError:
-        term.print(f"[red]emulator binary not found: {emulator_binary}[/red]")
+    except FileNotFoundError as e:
+        term.print(f"[red]emulator binary not found: {emulator_binary} ({e})[/red]")
         cleanup_temp(game)
         return False

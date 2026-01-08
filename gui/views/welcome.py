@@ -99,7 +99,7 @@ class WelcomeView:
                 ],
                 spacing=0,
             ),
-            border=ft.border.all(2, ft.Colors.OUTLINE),
+            border=ft.Border.all(2, ft.Colors.OUTLINE),
             border_radius=12,
             ink=True,
             on_click=lambda _: self.app.show_install_console(),

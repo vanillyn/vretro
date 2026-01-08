@@ -76,7 +76,7 @@ class ThemeManager:
             img = img.resize((150, 150))
             img = img.convert("RGB")
 
-            pixels = list(img.getdata())
+            pixels = list(img.get_flattened_data())
 
             color_counts = {}
             for pixel in pixels:

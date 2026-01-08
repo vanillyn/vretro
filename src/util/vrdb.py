@@ -53,6 +53,8 @@ class ConsoleInfo:
     formats: List[str]
     generation: Optional[int] = None
     aliases: List[str] = field(default_factory=list)
+    extension: str = "bin"
+    igdb_platform_id: Optional[int] = None
 
 
 @dataclass
@@ -130,6 +132,8 @@ class VRDBConsole:
                 formats=console_data.get("Formats", []),
                 generation=console_data.get("Generation"),
                 aliases=console_data.get("Aliases", []),
+                extension=console_data.get("Extension", "bin"),
+                igdb_platform_id=console_data.get("IGDBPlatformID"),
             )
 
             games = {}
@@ -202,6 +206,18 @@ class VRDBDatabase:
         for console in self.consoles.values():
             if console.console.name.lower() == name.lower():
                 return console
+        return None
+
+    def get_extension(self, console_code: str) -> str:
+        console = self.get_console(console_code)
+        if console:
+            return console.console.extension
+        return "bin"
+
+    def get_platform_id(self, console_code: str) -> Optional[int]:
+        console = self.get_console(console_code)
+        if console:
+            return console.console.igdb_platform_id
         return None
 
     def list_consoles(self) -> List[str]:
