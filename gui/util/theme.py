@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -23,36 +24,65 @@ class ThemeManager:
 
     def _get_system_theme(self) -> ft.ThemeMode:
         try:
-            xresources = self._read_xresources()
-            if xresources:
-                bg = xresources.get("background", "#000000")
-                if self._is_light_color(bg):
-                    return ft.ThemeMode.LIGHT
-                else:
+            result = subprocess.run(
+                [
+                    "kreadconfig6",
+                    "--file",
+                    "kdeglobals",
+                    "--group",
+                    "General",
+                    "--key",
+                    "ColorScheme",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=1,
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                scheme = result.stdout.strip().lower()
+                if "dark" in scheme:
                     return ft.ThemeMode.DARK
+                if "light" in scheme or "breeze" in scheme:
+                    return ft.ThemeMode.LIGHT
+        except Exception:
+            pass
+
+        try:
+            xresources = self._read_xresources()
+            bg = xresources.get("background") or xresources.get("Background")
+            if bg:
+                return (
+                    ft.ThemeMode.LIGHT
+                    if self._is_light_color(bg)
+                    else ft.ThemeMode.DARK
+                )
         except Exception:
             pass
 
         return ft.ThemeMode.DARK
 
     def _read_xresources(self) -> dict:
-        xresources_path = Path.home() / ".Xresources"
-        if not xresources_path.exists():
-            return {}
-
         resources = {}
         try:
-            with open(xresources_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("!") or line.startswith("#"):
-                        continue
+            result = subprocess.run(
+                ["xrdb", "-query"], capture_output=True, text=True, timeout=1
+            )
 
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        key = key.strip().replace("*", "").replace(".", "")
-                        value = value.strip()
-                        resources[key] = value
+            if result.returncode == 0:
+                lines = result.stdout.splitlines()
+            else:
+                x_path = Path.home() / ".Xresources"
+                lines = x_path.read_text().splitlines() if x_path.exists() else []
+
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith(("!", "#")):
+                    continue
+                if ":" in line:
+                    key, value = line.split(":", 1)
+                    clean_key = key.strip().lstrip("*").lstrip(".")
+                    resources[clean_key] = value.strip()
         except Exception:
             pass
 
@@ -70,13 +100,17 @@ class ThemeManager:
 
     def extract_color_from_image(self, image_path: Path) -> Optional[str]:
         try:
+            import colorsys
+
             from PIL import Image
 
             img = Image.open(image_path)
             img = img.resize((150, 150))
             img = img.convert("RGB")
 
-            pixels = list(img.get_flattened_data())
+            pixels = list(img.getdata())
+
+            is_light = self.get_theme_mode() == ft.ThemeMode.LIGHT
 
             color_counts = {}
             for pixel in pixels:
@@ -89,16 +123,40 @@ class ThemeManager:
                 color_counts.items(), key=lambda x: x[1], reverse=True
             )
 
-            for color, _ in sorted_colors[:10]:
+            for color, _ in sorted_colors[:20]:
                 r, g, b = color
-                if not (
-                    (r < 30 and g < 30 and b < 30) or (r > 225 and g > 225 and b > 225)
-                ):
-                    return f"#{r:02x}{g:02x}{b:02x}"
+
+                if (r < 30 and g < 30 and b < 30) or (r > 225 and g > 225 and b > 225):
+                    continue
+
+                h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+
+                if s < 0.2:
+                    continue
+
+                if is_light:
+                    v = max(0.3, min(0.6, v))
+                    s = max(0.4, s)
+                else:
+                    v = max(0.5, min(0.9, v))
+                    s = max(0.3, s)
+
+                r, g, b = colorsys.hsv_to_rgb(h, s, v)
+                return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
 
             if sorted_colors:
                 r, g, b = sorted_colors[0][0]
-                return f"#{r:02x}{g:02x}{b:02x}"
+                h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+
+                if is_light:
+                    v = 0.5
+                    s = 0.6
+                else:
+                    v = 0.7
+                    s = 0.5
+
+                r, g, b = colorsys.hsv_to_rgb(h, s, v)
+                return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
 
         except Exception:
             pass
@@ -114,6 +172,24 @@ class ThemeManager:
 
         if self.primary_color:
             return self.primary_color
+
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["kreadconfig6", "--group", "General", "--key", "AccentColor"],
+                capture_output=True,
+                text=True,
+                timeout=1,
+            )
+
+            if result.returncode == 0:
+                color_values = result.stdout.strip().split(",")
+                if len(color_values) >= 3:
+                    r, g, b = [int(v) for v in color_values[:3]]
+                    return f"#{r:02x}{g:02x}{b:02x}"
+        except Exception:
+            pass
 
         xresources = self._read_xresources()
         color = xresources.get("color4", None)
