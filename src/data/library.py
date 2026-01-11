@@ -22,6 +22,10 @@ class GameMetadata:
     thumbnail: Optional[str] = None
     favorite: bool = False
     playtime: int = 0
+    retroachievements_id: Optional[int] = None
+    steam_app_id: Optional[int] = None
+    proton_version: Optional[str] = None
+    mod_root: Optional[str] = None
 
     @classmethod
     def from_json(cls, data: dict) -> "GameMetadata":

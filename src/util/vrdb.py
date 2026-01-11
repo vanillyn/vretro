@@ -55,6 +55,7 @@ class ConsoleInfo:
     aliases: List[str] = field(default_factory=list)
     extension: str = "bin"
     igdb_platform_id: Optional[int] = None
+    retroachievements_console_id: Optional[int] = None
 
 
 @dataclass
@@ -80,9 +81,19 @@ class GameSource:
             return f"https://arweave.net/{self.identifier}"
         elif self.scheme == "switch":
             return f"https://dl.romheaven.com/{self.identifier}.zip"
+        elif self.scheme == "steam":
+            return ""
         elif self.scheme in ["http", "https"]:
             return self.original_uri
         return ""
+
+    def get_steam_app_id(self) -> Optional[int]:
+        if self.scheme == "steam":
+            try:
+                return int(self.identifier)
+            except ValueError:
+                return None
+        return None
 
 
 @dataclass
@@ -134,6 +145,7 @@ class VRDBConsole:
                 aliases=console_data.get("Aliases", []),
                 extension=console_data.get("Extension", "bin"),
                 igdb_platform_id=console_data.get("IGDBPlatformID"),
+                retroachievements_console_id=console_data.get("RetroAchievementsConsoleID"),
             )
 
             games = {}
@@ -218,6 +230,12 @@ class VRDBDatabase:
         console = self.get_console(console_code)
         if console:
             return console.console.igdb_platform_id
+        return None
+
+    def get_retroachievements_console_id(self, console_code: str) -> Optional[int]:
+        console = self.get_console(console_code)
+        if console:
+            return console.console.retroachievements_console_id
         return None
 
     def list_consoles(self) -> List[str]:

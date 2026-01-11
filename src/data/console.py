@@ -24,6 +24,7 @@ class ConsoleMetadata:
     formats: List[str]
     emulator: EmulatorConfig
     generation: Optional[int] = None
+    retroachievements_console_id: Optional[int] = None
 
     @classmethod
     def from_json(cls, data: dict, manufacturer: str = "unknown"):
@@ -46,6 +47,7 @@ class ConsoleMetadata:
             formats=data["formats"],
             emulator=emulator,
             generation=data.get("generation"),
+            retroachievements_console_id=data.get("retroachievements_console_id"),
         )
 
     @classmethod
@@ -68,6 +70,7 @@ class ConsoleMetadata:
             formats=vrdb_console.console.formats,
             emulator=emulator,
             generation=vrdb_console.console.generation,
+            retroachievements_console_id=vrdb_console.console.retroachievements_console_id,
         )
 
     def to_json(self) -> dict:
@@ -78,6 +81,7 @@ class ConsoleMetadata:
             "manufacturer": self.manufacturer,
             "formats": self.formats,
             "generation": self.generation,
+            "retroachievements_console_id": self.retroachievements_console_id,
             "emulator": {
                 "name": self.emulator.name,
                 "binary": self.emulator.binary,

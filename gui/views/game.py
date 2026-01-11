@@ -24,6 +24,8 @@ class GameView:
         self.game_details = None
         self.is_playing = False
         self.mod_manager = ModManager(game.path)
+        self.achievements = []
+        self.user_progress = None
 
     def create(self) -> ft.Container:
         graphics_dir = self.game.path / "graphics"
@@ -38,10 +40,14 @@ class GameView:
         if self.app.config.igdb_client_id and self.app.config.igdb_client_secret:
             self._load_game_details()
 
+        if self.app.config.retroachievements_api_key:
+            threading.Thread(target=self._load_achievements, daemon=True).start()
+
         hero_section = self._create_hero(hero_path, logo_path)
         launch_section = self._create_launch_section()
         description_section = self._create_description_section()
         settings_section = self._create_quick_settings_row()
+        self.achievements_container = ft.Container()
         screenshots_section = self._create_screenshots_section()
         details_section = self._create_details_section()
 
@@ -54,6 +60,7 @@ class GameView:
                             launch_section,
                             description_section,
                             settings_section,
+                            self.achievements_container,
                             screenshots_section,
                             details_section,
                         ],
@@ -67,6 +74,150 @@ class GameView:
             ),
             expand=True,
             padding=0,
+        )
+
+    def _load_achievements(self) -> None:
+        import logging
+
+        from src.util.achievements import RetroAchievementsAPI
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"loading achievements for {self.game.metadata.get_title()}")
+
+        ra_api = RetroAchievementsAPI(
+            self.app.config.retroachievements_api_key,
+            self.app.config.retroachievements_username,
+        )
+
+        console_meta = self.app.library.get_console_metadata(self.game.metadata.console)
+
+        if not self.game.metadata.retroachievements_id:
+            if console_meta and console_meta.retroachievements_console_id:
+                logger.info(
+                    f"searching retroachievements with console id {console_meta.retroachievements_console_id}"
+                )
+                game_id = ra_api.search_game(
+                    console_meta.retroachievements_console_id,
+                    self.game.metadata.get_title(),
+                )
+
+                if game_id:
+                    logger.info(f"found retroachievements game id: {game_id}")
+                    self.game.metadata.retroachievements_id = game_id
+                    self.game.metadata.save(self.game.path / "metadata.json")
+                else:
+                    logger.warning(
+                        f"could not find retroachievements game for {self.game.metadata.get_title()}"
+                    )
+                    return
+            else:
+                logger.warning(
+                    f"console {self.game.metadata.console} has no retroachievements_console_id"
+                )
+                return
+
+        if self.game.metadata.retroachievements_id:
+            logger.info(
+                f"fetching achievements for game id {self.game.metadata.retroachievements_id}"
+            )
+            self.achievements = ra_api.get_game_achievements(
+                self.game.metadata.retroachievements_id
+            )
+            self.user_progress = ra_api.get_user_progress(
+                self.game.metadata.retroachievements_id
+            )
+
+            if self.achievements or self.user_progress:
+                logger.info(f"loaded {len(self.achievements)} achievements")
+                self.achievements_container.content = (
+                    self._create_achievements_section()
+                )
+                if self.app.page:
+                    self.app.page.update()
+            else:
+                logger.warning("no achievements or progress data received")
+
+    def _create_achievements_section(self) -> ft.Column:
+        if not self.achievements and not self.user_progress:
+            return ft.Column()
+
+        content = []
+
+        if self.user_progress:
+            progress_bar = ft.ProgressBar(
+                value=self.user_progress.earned_hardcore
+                / max(self.user_progress.total_achievements, 1),
+                height=8,
+                border_radius=4,
+            )
+
+            progress_text = ft.Text(
+                f"{self.user_progress.earned_hardcore}/{self.user_progress.total_achievements} achievements • {self.user_progress.earned_points}/{self.user_progress.total_points} points",
+                size=14,
+                color=ft.Colors.ON_SURFACE_VARIANT,
+            )
+
+            content.extend([progress_bar, ft.Container(height=10), progress_text])
+
+        if self.achievements:
+            unlocked = [a for a in self.achievements if a.unlocked]
+
+            if unlocked:
+                content.append(ft.Container(height=10))
+                content.append(
+                    ft.Text("recent unlocks", size=14, weight=ft.FontWeight.W_500)
+                )
+
+                recent_row = ft.Row(scroll=ft.ScrollMode.AUTO, spacing=10)
+
+                for achievement in unlocked[:10]:
+                    recent_row.controls.append(
+                        ft.Container(
+                            content=ft.Column(
+                                [
+                                    ft.Image(
+                                        src=achievement.badge_url,
+                                        width=64,
+                                        height=64,
+                                        fit=ft.BoxFit.COVER,
+                                        border_radius=8,
+                                    ),
+                                    ft.Text(
+                                        achievement.title,
+                                        size=11,
+                                        max_lines=2,
+                                        text_align=ft.TextAlign.CENTER,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                    ),
+                                ],
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                spacing=5,
+                            ),
+                            width=80,
+                        )
+                    )
+
+                content.append(recent_row)
+
+        return ft.Column(
+            [
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Icon(ft.Icons.EMOJI_EVENTS, size=20),
+                            ft.Text(
+                                "achievements", size=18, weight=ft.FontWeight.W_500
+                            ),
+                        ],
+                        spacing=10,
+                    ),
+                    padding=ft.Padding.only(left=40, right=40, bottom=10),
+                ),
+                ft.Container(
+                    content=ft.Column(content, spacing=10),
+                    padding=ft.Padding.only(left=40, right=40),
+                ),
+            ]
         )
 
     def _create_hero(self, hero_path, logo_path) -> ft.Control:
@@ -228,6 +379,11 @@ class GameView:
                         icon=ft.Icons.IMAGE_SEARCH,
                         on_click=lambda _: self._download_artwork(),
                         tooltip="download artwork",
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.EXTENSION,
+                        on_click=lambda _: self._browse_gamebanana(),
+                        tooltip="browse gamebanana mods",
                     ),
                     ft.Container(expand=True),
                     ft.Text(
@@ -654,8 +810,6 @@ class GameView:
 
         self.app.page.show_dialog(progress)
 
-        import threading
-
         def process():
             if is_compressed:
                 success = decompress_game_directory(self.game.path, verbose=False)
@@ -681,6 +835,17 @@ class GameView:
 
         dialog = ModManagerDialog(
             self.app.page, self.mod_manager, lambda: self.app.show_game(self.game)
+        )
+        self.app.page.show_dialog(dialog.create())
+
+    def _browse_gamebanana(self) -> None:
+        from ..elements.dialogs import GameBananaDialog
+
+        dialog = GameBananaDialog(
+            self.app.page,
+            self.game,
+            self.mod_manager,
+            lambda: self.app.show_game(self.game),
         )
         self.app.page.show_dialog(dialog.create())
 

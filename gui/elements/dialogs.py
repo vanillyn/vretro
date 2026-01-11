@@ -1,3 +1,4 @@
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -12,7 +13,11 @@ from src.data.config import VRetroConfig
 from src.data.console import get_console_metadata
 from src.data.library import GameMetadata
 from src.util.download import download_emulator
+from src.util.gb import GameBananaAPI
 from src.util.mods import ModInfo, ModManager
+from src.util.steam import SteamManager
+
+logger = logging.getLogger(__name__)
 
 
 class FirstTimeSetupDialog:
@@ -417,10 +422,28 @@ class SettingsDialog:
             value=self.config.primary_color or "",
             hint_text="#1976d2",
         )
+        self.steamgrid_key = ft.TextField(
+            label="steamgriddb api key",
+            value=self.config.steamgrid_api_key or "",
+            password=True,
+            can_reveal_password=True,
+        )
+
+        self.ra_api_key = ft.TextField(
+            label="retroachievements api key",
+            value=self.config.retroachievements_api_key or "",
+            password=True,
+            can_reveal_password=True,
+        )
+
+        self.ra_username = ft.TextField(
+            label="retroachievements username",
+            value=self.config.retroachievements_username or "",
+        )
 
         tabs = ft.Tabs(
             selected_index=0,
-            length=4,
+            length=5,
             expand=True,
             content=ft.Column(
                 expand=True,
@@ -431,6 +454,7 @@ class SettingsDialog:
                             ft.Tab(label="theme"),
                             ft.Tab(label="igdb api"),
                             ft.Tab(label="steamgriddb"),
+                            ft.Tab(label="retroachievements"),
                         ]
                     ),
                     ft.TabBarView(
@@ -478,6 +502,20 @@ class SettingsDialog:
                             ),
                             ft.Container(
                                 content=ft.Column([self.steamgrid_key]),
+                                padding=20,
+                            ),
+                            ft.Container(
+                                content=ft.Column(
+                                    [
+                                        self.ra_api_key,
+                                        self.ra_username,
+                                        ft.Text(
+                                            "get your api key at retroachievements.org",
+                                            size=11,
+                                            color=ft.Colors.ON_SURFACE_VARIANT,
+                                        ),
+                                    ]
+                                ),
                                 padding=20,
                             ),
                         ],
@@ -1822,3 +1860,531 @@ class ModManagerDialog:
             self.page.overlay.remove(self.file_picker)
         self.page.pop_dialog()
         self.on_save()
+
+
+class SteamInstallDialog:
+    def __init__(self, page: ft.Page, library, on_install: Callable):
+        self.page = page
+        self.library = library
+        self.on_install = on_install
+        self.steam = SteamManager()
+        self.search_results = []
+
+    def create(self) -> ft.AlertDialog:
+        self.search_input = ft.TextField(
+            label="search steam games",
+            hint_text="search by name...",
+            on_submit=lambda _: self._search(),
+        )
+
+        self.games_list = ft.Column(
+            spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
+
+        self.progress_ring = ft.ProgressRing(visible=False)
+
+        return ft.AlertDialog(
+            title=ft.Text("install steam game"),
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                self.search_input,
+                                ft.IconButton(
+                                    icon=ft.Icons.SEARCH,
+                                    on_click=lambda _: self._search(),
+                                ),
+                            ]
+                        ),
+                        self.progress_ring,
+                        self.games_list,
+                    ]
+                ),
+                width=700,
+                height=600,
+            ),
+            actions=[
+                ft.TextButton("close", on_click=lambda _: self.page.pop_dialog()),
+            ],
+        )
+
+    def _search(self) -> None:
+        query = self.search_input.value
+        if not query:
+            return
+
+        self.games_list.controls.clear()
+        self.progress_ring.visible = True
+        self.page.update()
+
+        logging.info(f"searching steam database for: {query}")
+
+        if not self.steam.database.apps:
+            logging.info("loading steam database")
+            self.steam.database.load_cache()
+
+        self.search_results = self.steam.database.search_games(query)
+
+        self.progress_ring.visible = False
+
+        if not self.search_results:
+            self.games_list.controls.append(
+                ft.Text("no games found", color=ft.Colors.ON_SURFACE_VARIANT)
+            )
+        else:
+            logging.info(f"found {len(self.search_results)} results")
+            for app_id, name in self.search_results[:20]:
+                card = self._create_game_card(app_id, name)
+                self.games_list.controls.append(card)
+
+        self.page.update()
+
+    def _create_game_card(self, app_id: int, name: str) -> ft.Container:
+        return ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.VIDEOGAME_ASSET, size=40),
+                    ft.Column(
+                        [
+                            ft.Text(
+                                name,
+                                size=16,
+                                weight=ft.FontWeight.W_500,
+                                max_lines=1,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            ft.Text(
+                                f"app id: {app_id}",
+                                size=12,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                        ],
+                        spacing=4,
+                        expand=True,
+                    ),
+                    ft.FilledButton(
+                        "install",
+                        icon=ft.Icons.DOWNLOAD,
+                        on_click=lambda _, aid=app_id, n=name: self._install_game(
+                            aid, n
+                        ),
+                    ),
+                ],
+                spacing=15,
+            ),
+            border=ft.border.all(1, ft.Colors.OUTLINE),
+            border_radius=12,
+            padding=15,
+        )
+
+    def _install_game(self, app_id: int, game_name: str) -> None:
+        self.page.pop_dialog()
+
+        progress_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("installing steam game"),
+            content=ft.Column(
+                [
+                    ft.ProgressRing(),
+                    ft.Text(f"adding {game_name}..."),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=20,
+            ),
+        )
+
+        self.page.show_dialog(progress_dialog)
+
+        def install_thread():
+            try:
+                logging.info(f"fetching steam game info for {app_id}")
+                game_info = self.steam.get_game_info(app_id)
+
+                if game_info:
+                    final_name = game_info.name
+                    publisher = (
+                        game_info.publishers[0] if game_info.publishers else "unknown"
+                    )
+                else:
+                    final_name = game_name
+                    publisher = "unknown"
+
+                console_dir = self.library.console_root / "Steam"
+                console_dir.mkdir(parents=True, exist_ok=True)
+
+                games_dir = console_dir / "games"
+                games_dir.mkdir(parents=True, exist_ok=True)
+
+                game_slug = re.sub(r"[^\w\s-]", "", final_name.lower())
+                game_slug = re.sub(r"[-\s]+", "-", game_slug).strip("-")
+
+                game_dir = games_dir / game_slug
+                game_dir.mkdir(parents=True, exist_ok=True)
+                (game_dir / "resources").mkdir(exist_ok=True)
+                (game_dir / "saves").mkdir(exist_ok=True)
+                (game_dir / "graphics").mkdir(exist_ok=True)
+
+                if game_info and game_info.header_image:
+                    import requests
+
+                    try:
+                        img_response = requests.get(game_info.header_image, timeout=10)
+                        if img_response.status_code == 200:
+                            (game_dir / "graphics" / "grid.png").write_bytes(
+                                img_response.content
+                            )
+                    except:
+                        pass
+
+                metadata = GameMetadata(
+                    code=f"steam-{game_slug}",
+                    console="STEAM",
+                    id=0,
+                    title={"NA": final_name},
+                    publisher={"NA": publisher},
+                    year=0,
+                    region="NA",
+                    steam_app_id=app_id,
+                )
+
+                metadata.save(game_dir / "metadata.json")
+
+                self.page.pop_dialog()
+                self._show_info("success", f"added {final_name}")
+                self.on_install()
+
+            except Exception as ex:
+                logging.error(f"failed to install steam game: {ex}")
+                self.page.pop_dialog()
+                self._show_error("error", f"failed to add game: {str(ex)}")
+
+        threading.Thread(target=install_thread, daemon=True).start()
+
+    def _show_error(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog())],
+        )
+        self.page.show_dialog(dialog)
+
+    def _show_info(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog())],
+        )
+        self.page.show_dialog(dialog)
+
+
+class SteamProtonDialog:
+    def __init__(self, page: ft.Page, game, on_save: Callable):
+        self.page = page
+        self.game = game
+        self.on_save = on_save
+        self.steam = SteamManager()
+
+    def create(self) -> ft.AlertDialog:
+        versions = self.steam.get_proton_versions()
+
+        self.proton_dropdown = ft.Dropdown(
+            label="proton version",
+            value=self.game.metadata.proton_version or "default",
+            options=[ft.dropdown.Option("default", "default (steam decides)")]
+            + [ft.dropdown.Option(v) for v in versions],
+        )
+
+        return ft.AlertDialog(
+            title=ft.Text("configure proton"),
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            "select which proton version to use",
+                            size=14,
+                            color=ft.Colors.ON_SURFACE_VARIANT,
+                        ),
+                        ft.Container(height=10),
+                        self.proton_dropdown,
+                    ]
+                ),
+                width=400,
+            ),
+            actions=[
+                ft.TextButton("cancel", on_click=lambda _: self.page.pop_dialog()),
+                ft.FilledButton("save", on_click=self._save),
+            ],
+        )
+
+    def _save(self, e) -> None:
+        proton_version = self.proton_dropdown.value
+        if proton_version == "default":
+            proton_version = None
+
+        self.game.metadata.proton_version = proton_version
+        self.game.metadata.save(self.game.path / "metadata.json")
+
+        self.page.pop_dialog()
+        self.on_save()
+
+
+class GameBananaDialog:
+    def __init__(self, page: ft.Page, game, mod_manager, on_install: Callable):
+        self.page = page
+        self.game = game
+        self.mod_manager = mod_manager
+        self.on_install = on_install
+        self.mods = []
+        self.gb_api = GameBananaAPI()
+
+    def create(self) -> ft.AlertDialog:
+        self.search_input = ft.TextField(
+            label="search gamebanana",
+            hint_text="search for mods...",
+            on_submit=lambda _: self._search(),
+        )
+
+        self.mods_list = ft.Column(
+            spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
+
+        self.progress_ring = ft.ProgressRing(visible=False)
+
+        return ft.AlertDialog(
+            title=ft.Text(f"gamebanana mods - {self.game.metadata.get_title()}"),
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                self.search_input,
+                                ft.IconButton(
+                                    icon=ft.Icons.SEARCH,
+                                    on_click=lambda _: self._search(),
+                                ),
+                            ]
+                        ),
+                        self.progress_ring,
+                        self.mods_list,
+                    ]
+                ),
+                width=700,
+                height=600,
+            ),
+            actions=[
+                ft.TextButton("close", on_click=lambda _: self.page.pop_dialog()),
+            ],
+        )
+
+    def _search(self) -> None:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        query = self.search_input.value
+
+        self.mods_list.controls.clear()
+        self.progress_ring.visible = True
+        self.page.update()
+
+        logger.info(f"searching gamebanana for game: {self.game.metadata.get_title()}")
+        game_id = self.gb_api.get_game_id(self.game.metadata.get_title())
+
+        if not game_id:
+            logger.warning(f"game not found, trying console name search")
+            console_meta = None
+            try:
+                from src.data.console import get_console_metadata
+
+                console_meta = get_console_metadata(self.game.metadata.console)
+            except:
+                pass
+
+            if console_meta:
+                game_id = self.gb_api.get_game_id(console_meta.name)
+
+        if not game_id:
+            self.progress_ring.visible = False
+            self.mods_list.controls.append(
+                ft.Column(
+                    [
+                        ft.Text(
+                            f"game not found on gamebanana",
+                            color=ft.Colors.ERROR,
+                            size=16,
+                        ),
+                        ft.Text(
+                            f"tried searching for: {self.game.metadata.get_title()}",
+                            size=12,
+                            color=ft.Colors.ON_SURFACE_VARIANT,
+                        ),
+                    ]
+                )
+            )
+            self.page.update()
+            return
+
+        logger.info(f"found game id {game_id}, searching mods")
+        self.mods = self.gb_api.search_mods(game_id, query)
+
+        self.progress_ring.visible = False
+
+        if not self.mods:
+            self.mods_list.controls.append(
+                ft.Text("no mods found", color=ft.Colors.ON_SURFACE_VARIANT)
+            )
+        else:
+            logger.info(f"found {len(self.mods)} mods")
+            for mod in self.mods:
+                card = self._create_mod_card(mod)
+                self.mods_list.controls.append(card)
+
+        self.page.update()
+
+    def _create_mod_card(self, mod) -> ft.Container:
+        thumbnail = None
+        if mod.thumbnail_url:
+            thumbnail = ft.Image(
+                src=mod.thumbnail_url,
+                width=120,
+                height=90,
+                fit=ft.BoxFit.COVER,
+                border_radius=8,
+            )
+        else:
+            thumbnail = ft.Container(
+                width=120,
+                height=90,
+                bgcolor=ft.Colors.SURFACE_CONTAINER,
+                border_radius=8,
+                content=ft.Icon(ft.Icons.EXTENSION, size=40),
+                alignment=ft.Alignment.CENTER,
+            )
+
+        return ft.Container(
+            content=ft.Row(
+                [
+                    thumbnail,
+                    ft.Column(
+                        [
+                            ft.Text(
+                                mod.name,
+                                size=16,
+                                weight=ft.FontWeight.W_500,
+                                max_lines=1,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            ft.Text(
+                                f"by {mod.author}",
+                                size=12,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                            ft.Text(
+                                f"{mod.downloads} downloads • {mod.likes} likes",
+                                size=11,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                            ft.Text(
+                                mod.description[:100] + "..."
+                                if len(mod.description) > 100
+                                else mod.description,
+                                size=12,
+                                max_lines=2,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                        ],
+                        spacing=4,
+                        expand=True,
+                    ),
+                    ft.FilledButton(
+                        "install",
+                        icon=ft.Icons.DOWNLOAD,
+                        on_click=lambda _, m=mod: self._install_mod(m),
+                    ),
+                ],
+                spacing=15,
+            ),
+            border=ft.border.all(1, ft.Colors.OUTLINE),
+            border_radius=12,
+            padding=15,
+        )
+
+    def _install_mod(self, mod) -> None:
+        progress_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("installing mod"),
+            content=ft.Column(
+                [
+                    ft.ProgressRing(),
+                    ft.Text(f"downloading {mod.name}..."),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=20,
+            ),
+        )
+
+        self.page.show_dialog(progress_dialog)
+
+        def download():
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+                    tmp_path = Path(tmp.name)
+
+                success = self.gb_api.download_mod(mod.download_url, tmp_path)
+
+                if not success:
+                    self.page.pop_dialog()
+                    self._show_error("download failed", "could not download mod")
+                    return
+
+                mod_dir = self.mod_manager.mods_dir / mod.name
+                mod_dir.mkdir(parents=True, exist_ok=True)
+
+                with zipfile.ZipFile(tmp_path, "r") as zf:
+                    zf.extractall(mod_dir)
+
+                tmp_path.unlink()
+
+                mod_json = {
+                    "name": mod.name,
+                    "description": mod.description,
+                    "version": mod.version,
+                    "author": mod.author,
+                    "gamebanana_id": mod.id,
+                }
+
+                with open(mod_dir / "mod.json", "w") as f:
+                    json.dump(mod_json, f, indent=2)
+
+                self.mod_manager._load_mods()
+
+                self.page.pop_dialog()
+                self.page.pop_dialog()
+                self._show_info("success", f"installed {mod.name}")
+                self.on_install()
+
+            except Exception as e:
+                self.page.pop_dialog()
+                self._show_error("error", f"failed to install: {str(e)}")
+
+        threading.Thread(target=download, daemon=True).start()
+
+    def _show_error(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog())],
+        )
+        self.page.show_dialog(dialog)
+
+    def _show_info(self, title: str, message: str) -> None:
+        dialog = ft.AlertDialog(
+            title=ft.Text(title),
+            content=ft.Text(message),
+            actions=[ft.TextButton("ok", on_click=lambda _: self.page.pop_dialog())],
+        )
+        self.page.show_dialog(dialog)

@@ -20,6 +20,8 @@ class VRetroConfig:
     igdb_client_secret: Optional[str] = None
     download_sources: List[str] = None
     steamgrid_api_key: Optional[str] = None
+    retroachievements_api_key: Optional[str] = None
+    retroachievements_username: Optional[str] = None
     theme_mode: str = "system"
     primary_color: Optional[str] = None
 
